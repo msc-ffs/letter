@@ -117,7 +117,8 @@ public class Mail.SearchQuery : Object {
             case SearchFilterKind.TO:
                 return _("To: %s").printf (clause.display);
             default:
-                return _("Contains: %s").printf (clause.display);
+                /* Compact chip: symbol instead of the long “Contains:” prefix. */
+                return "∋ %s".printf (clause.display);
         }
     }
 
@@ -151,9 +152,9 @@ public class Mail.SearchQuery : Object {
         return true;
     }
 
-    /* Localized operator shown in the search field tooltip (English always works too). */
+    /* Localized operator tip for the search field (English operators always work too). */
     public static string filter_hint () {
-        return _("Search all folders. Filter with %s, %s and %s").printf (
+        return _("Search all folders. Filter with %s, %s and %s. Chips and Enter run search.").printf (
             C_("Search filter", "contains:"),
             C_("Search filter", "from:"),
             C_("Search filter", "to:")

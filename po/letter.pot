@@ -252,10 +252,6 @@ msgstr ""
 msgid "Group by conversation"
 msgstr ""
 
-#: src/window.vala:526
-msgid "Chips and Enter run search."
-msgstr ""
-
 #: src/window.vala:1696
 #, c-format
 msgid "Sent “%s”"
@@ -1708,7 +1704,7 @@ msgstr ""
 
 #: src/search-query.vala:139
 #, c-format
-msgid "Search all folders. Filter with %s, %s and %s"
+msgid "Search all folders. Filter with %s, %s and %s. Chips and Enter run search."
 msgstr ""
 
 #: src/search-query.vala:140 src/search-query.vala:285

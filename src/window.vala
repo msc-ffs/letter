@@ -652,10 +652,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.message_search.query_changed.connect (on_search_query_edited);
         this.message_search.activated.connect (on_search_activated);
         this.message_search.stopped.connect (on_search_stopped);
-        this.message_search.tooltip_text = "%s\n%s".printf (
-            SearchQuery.filter_hint (),
-            _("Chips and Enter run search.")
-        );
+        this.message_search.tooltip_text = SearchQuery.filter_hint ();
         this.message_search.bind_contacts (app.contacts);
         this.settings.changed["mark-as-read"].connect (on_mark_as_read_setting);
 
@@ -1907,9 +1904,11 @@ public class Mail.Window : Adw.ApplicationWindow {
     private void on_search_toggled () {
         var active = this.search_toggle_button.active;
         this.message_search_bar.search_mode_enabled = active;
-        this.search_toggle_button.tooltip_text = active ? _("Hide Search") : _("Search");
+        this.search_toggle_button.tooltip_text = active ? _("Close Search") : _("Search");
         if (active)
             this.message_search.grab_focus ();
+        else
+            reset_message_search ();
     }
 
     private bool on_escape_key_pressed (uint keyval, uint keycode, Gdk.ModifierType state) {
@@ -1923,10 +1922,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         }
         if (!this.search_toggle_button.active)
             return false;
-        if (in_search_mode ())
-            on_search_stopped ();
-        else
-            this.search_toggle_button.active = false;
+        on_search_stopped ();
         return true;
     }
 
@@ -1956,14 +1952,20 @@ public class Mail.Window : Adw.ApplicationWindow {
         apply_search_query (this.message_search.query ());
     }
 
-    private void on_search_stopped () {
+    private void reset_message_search () {
         if (this.search_source != 0) {
             Source.remove (this.search_source);
             this.search_source = 0;
         }
-        this.search_toggle_button.active = false;
         this.message_search.clear ();
         apply_search_query (new SearchQuery ());
+    }
+
+    private void on_search_stopped () {
+        if (this.search_toggle_button.active)
+            this.search_toggle_button.active = false;
+        else
+            reset_message_search ();
     }
 
     private bool in_search_mode () {

@@ -1813,8 +1813,8 @@ msgstr "Contiene: %s"
 
 #: src/search-query.vala:139
 #, c-format
-msgid "Search all folders. Filter with %s, %s and %s"
-msgstr "Cerca in tutte le cartelle. Filtra con %s, %s e %s"
+msgid "Search all folders. Filter with %s, %s and %s. Chips and Enter run search."
+msgstr "Cerca in tutte le cartelle. Filtra con %s, %s e %s. I chip e Invio avviano la ricerca."
 
 #: src/search-query.vala:140 src/search-query.vala:285
 msgctxt "Search filter"
