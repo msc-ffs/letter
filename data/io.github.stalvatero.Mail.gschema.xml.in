@@ -24,9 +24,9 @@
       <description>Whether the folder sidebar is visible on wide layouts.</description>
     </key>
     <key name="folder-pane-width" type="i">
-      <default>280</default>
+      <default>260</default>
       <summary>Folder pane width</summary>
-      <description>Width of the folder list pane in pixels.</description>
+      <description>Preferred folder list pane width hint (Adw clamps between about 180–260sp as a fraction of the window). Under about 920sp the pane autohides.</description>
     </key>
     <key name="last-account-uid" type="s">
       <default>''</default>
@@ -67,7 +67,7 @@
     <key name="message-pane-width" type="i">
       <default>360</default>
       <summary>Message list width</summary>
-      <description>Width or height of the message list next to the reading pane, in pixels.</description>
+      <description>Preferred width of the message list (about 260–560px). The list may shrink below this when the window is narrow, then grow back only up to this preference.</description>
     </key>
     <key name="compose-width" type="i">
       <default>720</default>

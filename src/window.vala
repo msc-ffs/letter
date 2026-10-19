@@ -2,13 +2,29 @@
 public class Mail.Window : Adw.ApplicationWindow {
     static construct {
         typeof (SearchField).ensure ();
+        typeof (ListReaderSplit).ensure ();
     }
     private const int ACCOUNT_PANE_MIN = 220;
     private const int ACCOUNT_PANE_MAX = 320;
-    private const int FOLDER_PANE_MIN = 200;
-    private const int FOLDER_PANE_MAX = 520;
+    /* Adw.OverlaySplitView: width = clamp(fraction×view, min, max).
+     * At the 920sp collapse the split is ~870px wide (window − rail); with
+     * 0.21 that lands near 180 — the usable minimum before hide. */
+    private const int FOLDER_PANE_MIN = 180;
+    private const int FOLDER_PANE_MAX = 260;
+    private const double FOLDER_PANE_FRACTION = 0.21;
+    /* Slightly above 900sp so header window controls are not clipped on
+     * the last pixels of shrink before collapse. */
+    private const double FOLDER_PANE_NARROW_SP = 920;
     private const int MESSAGE_PANE_MIN = 260;
     private const int MESSAGE_PANE_MAX = 560;
+    /* Under window pressure the list may use at most this share of the
+     * list+reader split (reader keeps the rest). ⅓ ⇒ ~1px list per 2px
+     * reader while both shrink — starts well before the reader chrome min. */
+    private const double MESSAGE_LIST_SHARE = 1.0 / 3.0;
+    /* Compose + menu + window controls in the split reader header.
+     * Action bar / important icon clip inside the reader; these must not. */
+    private const int READER_PANE_MIN = 320;
+    private const int ACCOUNT_RAIL_WIDTH = 48;
     private const int WINDOW_MIN_WIDTH = 800;
     private const int WINDOW_MIN_HEIGHT = 520;
 
@@ -33,11 +49,15 @@ public class Mail.Window : Adw.ApplicationWindow {
     [GtkChild]
     private unowned Adw.StatusPage no_accounts_page;
     [GtkChild]
-    private unowned Gtk.Paned content_split;
+    private unowned Adw.OverlaySplitView folder_pane_split;
+    [GtkChild]
+    private unowned Adw.ToolbarView folder_mail;
     [GtkChild]
     private unowned Adw.HeaderBar folder_header;
     [GtkChild]
     private unowned Gtk.ToggleButton sidebar_button;
+    [GtkChild]
+    private unowned Gtk.ToggleButton folder_pane_button;
     [GtkChild]
     private unowned Adw.WindowTitle folder_title;
     [GtkChild]
@@ -61,11 +81,15 @@ public class Mail.Window : Adw.ApplicationWindow {
     [GtkChild]
     private unowned Gtk.ToggleButton conversation_button;
     [GtkChild]
-    private unowned SearchField message_search;
+    private unowned Gtk.ToggleButton search_toggle_button;
+    private SearchField message_search;
+    private Gtk.SearchBar message_search_bar;
     [GtkChild]
     private unowned Gtk.MenuButton menu_button;
     [GtkChild]
     private unowned Gtk.Paned message_split;
+    [GtkChild]
+    private unowned ListReaderSplit message_split_frame;
     [GtkChild]
     private unowned Adw.Bin list_bin;
     [GtkChild]
@@ -79,6 +103,8 @@ public class Mail.Window : Adw.ApplicationWindow {
     private unowned Adw.Spinner conversation_sync_spinner;
     [GtkChild]
     private unowned Gtk.Paned split_mail;
+    [GtkChild]
+    private unowned ListReaderSplit split_mail_frame;
     [GtkChild]
     private unowned Adw.ToolbarView list_mail;
     [GtkChild]
@@ -139,8 +165,19 @@ public class Mail.Window : Adw.ApplicationWindow {
     private Cancellable? folder_cancellable;
     private Cancellable? body_cancellable;
     private Cancellable? idle_cancellable;
-    private bool clamping_pane;
     private bool clamping_message_pane;
+    /* User-chosen list width; window shrink may go below, grow stops here. */
+    private int message_pane_preferred;
+    private bool syncing_folder_pane_toggle;
+    /* True while window is under the narrow breakpoint / chrome floor.
+     * Restore runs only when stably wide again. */
+    private bool folder_pane_narrow;
+    /* User opened folders as overlay while narrow; cleared on widen/autohide. */
+    private bool folder_pane_overlay_wanted;
+    private uint folder_pane_width_idle;
+    private uint folder_pane_hide_source;
+    private bool folder_pane_surface_bound;
+    private Adw.Breakpoint? folder_pane_narrow_break;
     private Adw.SpinnerPaintable folder_spinner;
     private Adw.SpinnerPaintable conversation_spinner;
     private HashTable<string, GenericArray<Message>> message_cache;
@@ -277,6 +314,17 @@ public class Mail.Window : Adw.ApplicationWindow {
     public Window (Application app) {
         Object (application: app);
 
+        this.message_search = new SearchField () {
+            hexpand = true,
+            halign = Gtk.Align.FILL,
+            width_request = 0,
+            margin_start = 12,
+            margin_end = 12,
+            margin_top = 4,
+            margin_bottom = 4,
+            placeholder_text = _("Search"),
+        };
+        this.message_search.add_css_class ("mail-search-field");
         this.settings = new Settings (Config.APP_ID);
         add_action_entries (WINDOW_ACTIONS, this);
         Utils.add_mail_letter_shortcuts (this);
@@ -296,8 +344,8 @@ public class Mail.Window : Adw.ApplicationWindow {
         default_height = this.settings.get_int ("window-height")
             .clamp (WINDOW_MIN_HEIGHT, 4000);
         maximized = this.settings.get_boolean ("window-maximized");
-        width_request = WINDOW_MIN_WIDTH;
         height_request = WINDOW_MIN_HEIGHT;
+        update_window_width_request ();
         this.sidebar_button.active = this.settings.get_boolean ("show-folder-sidebar");
         this.sidebar_button.toggled.connect (() => {
             apply_account_sidebar (this.sidebar_button.active);
@@ -313,18 +361,30 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.settings.changed["account-rail"].connect (apply_account_rail);
         this.settings.changed["account-avatars"].connect (fill_account_rail);
         apply_account_rail ();
-        this.content_split.position = this.settings.get_int ("folder-pane-width")
-            .clamp (FOLDER_PANE_MIN, FOLDER_PANE_MAX);
-        this.content_split.notify["position"].connect (on_folder_pane_resized);
-        var message_pane_width = this.settings.get_int ("message-pane-width")
+        this.folder_pane_button.toggled.connect (on_folder_pane_toggled);
+        this.folder_pane_split.notify["show-sidebar"].connect (on_folder_pane_show_sidebar);
+        /* Same pattern as the account OverlaySplitView: breakpoint owns
+         * collapsed (animated); we only mirror show-sidebar. */
+        this.folder_pane_split.notify["collapsed"].connect (on_folder_pane_collapsed);
+        bind_folder_pane_narrow_breakpoint ();
+        apply_folder_pane_chrome ();
+        if (this.folder_pane_split.collapsed)
+            on_folder_pane_collapsed ();
+        else
+            apply_folder_pane (this.settings.get_boolean ("show-mail-folders-pane"));
+        this.map.connect (on_folder_pane_window_mapped);
+        if (get_mapped ())
+            on_folder_pane_window_mapped ();
+        this.message_pane_preferred = this.settings.get_int ("message-pane-width")
             .clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
-        this.message_split.position = message_pane_width;
-        this.split_mail.position = message_pane_width;
+        this.message_split.position = this.message_pane_preferred;
+        this.split_mail.position = this.message_pane_preferred;
         this.message_split.notify["position"].connect (on_message_pane_resized);
         this.split_mail.notify["position"].connect (on_split_mail_resized);
+        this.split_mail_frame.list_width_for.connect (split_mail_list_width_for);
+        this.message_split_frame.list_width_for.connect (message_split_list_width_for);
         this.settings.changed["reading-pane"].connect (apply_reading_pane);
         apply_reading_pane ();
-        notify["default-width"].connect (() => update_search_field_width ());
 
         this.folder_spinner = new Adw.SpinnerPaintable (this.no_folders_page);
         this.conversation_spinner = new Adw.SpinnerPaintable (this.conversation_page);
@@ -562,16 +622,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         };
         var escape = new Gtk.EventControllerKey ();
         escape.set_propagation_phase (Gtk.PropagationPhase.CAPTURE);
-        escape.key_pressed.connect ((keyval, keycode, state) => {
-            if (keyval != Gdk.Key.Escape)
-                return false;
-            if ((state & Gtk.accelerator_get_default_mod_mask ()) != 0)
-                return false;
-            if (!in_search_mode ())
-                return false;
-            on_search_stopped ();
-            return true;
-        });
+        escape.key_pressed.connect (on_escape_key_pressed);
         /* Blueprint Window exposes add_controller(ShortcutController); cast to Widget. */
         ((Gtk.Widget) this).add_controller (escape);
         this.list_body = new Adw.Bin () {
@@ -580,10 +631,17 @@ public class Mail.Window : Adw.ApplicationWindow {
             child = this.message_scrolled,
         };
         this.list_pane = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+        this.message_search_bar = new Gtk.SearchBar () {
+            hexpand = true,
+            search_mode_enabled = false,
+            child = this.message_search,
+        };
+        this.list_pane.append (this.message_search_bar);
         this.list_pane.append (this.list_body);
         this.list_pane.append (this.search_deeper_bar);
 
         this.unread_filter_button.toggled.connect (on_unread_filter_toggled);
+        this.search_toggle_button.toggled.connect (on_search_toggled);
         this.conversation_view = this.settings.get_boolean ("conversation-view");
         this.conversation_button.active = this.conversation_view;
         this.conversation_button.tooltip_text = this.conversation_view
@@ -1842,7 +1900,34 @@ public class Mail.Window : Adw.ApplicationWindow {
     }
 
     private void on_search () {
+        this.search_toggle_button.active = true;
         this.message_search.grab_focus ();
+    }
+
+    private void on_search_toggled () {
+        var active = this.search_toggle_button.active;
+        this.message_search_bar.search_mode_enabled = active;
+        this.search_toggle_button.tooltip_text = active ? _("Hide Search") : _("Search");
+        if (active)
+            this.message_search.grab_focus ();
+    }
+
+    private bool on_escape_key_pressed (uint keyval, uint keycode, Gdk.ModifierType state) {
+        if (keyval != Gdk.Key.Escape)
+            return false;
+        if ((state & Gtk.accelerator_get_default_mod_mask ()) != 0)
+            return false;
+        if (this.folder_pane_split.collapsed && this.folder_pane_split.show_sidebar) {
+            this.folder_pane_split.show_sidebar = false;
+            return true;
+        }
+        if (!this.search_toggle_button.active)
+            return false;
+        if (in_search_mode ())
+            on_search_stopped ();
+        else
+            this.search_toggle_button.active = false;
+        return true;
     }
 
     /* Typing updates suggestions. Search runs on Enter, when a chip is added
@@ -1876,6 +1961,7 @@ public class Mail.Window : Adw.ApplicationWindow {
             Source.remove (this.search_source);
             this.search_source = 0;
         }
+        this.search_toggle_button.active = false;
         this.message_search.clear ();
         apply_search_query (new SearchQuery ());
     }
@@ -6879,11 +6965,103 @@ public class Mail.Window : Adw.ApplicationWindow {
             this.reader_bin.visible = true;
             this.reader_mail.visible = true;
         }
-        update_search_field_width ();
+
+        update_window_width_request ();
+        ensure_split_reader_min ();
+    }
+
+    private int measure_reader_chrome_min () {
+        Gtk.Widget bar = this.reading_pane_split
+            ? (Gtk.Widget) this.reader_header
+            : this.conversation_header;
+        int minimum;
+        int natural;
+        int minimum_baseline;
+        int natural_baseline;
+        bar.measure (
+            Gtk.Orientation.HORIZONTAL,
+            -1,
+            out minimum,
+            out natural,
+            out minimum_baseline,
+            out natural_baseline
+        );
+        return int.max (READER_PANE_MIN, minimum);
+    }
+
+    private int split_shell_floor_without_folders () {
+        return ACCOUNT_RAIL_WIDTH + MESSAGE_PANE_MIN + measure_reader_chrome_min ();
+    }
+
+    private void update_window_width_request () {
+        /* Hard floor after folders are gone — resize bumps into this instead
+         * of clipping menu / minimize / maximize / close (native GTK feel). */
+        if (this.reading_pane_split)
+            width_request = int.max (WINDOW_MIN_WIDTH, split_shell_floor_without_folders ());
+        else
+            width_request = WINDOW_MIN_WIDTH;
+    }
+
+    private void ensure_split_reader_min () {
+        if (!this.reading_pane_split || !this.split_mail.visible || this.clamping_split_mail)
+            return;
+
+        var reader_min = measure_reader_chrome_min ();
+        this.reader_mail.width_request = reader_min;
+        apply_message_pane_preferred ();
+    }
+
+    private const int MAIL_SPLIT_HANDLE = 12;
+
+    /* Largest list width the split may use at this size: the reader keeps
+     * its chrome minimum and at least (1 − SHARE) of the space. */
+    private int message_list_cap (int total, int reader_min) {
+        var usable = int.max (0, total - MAIL_SPLIT_HANDLE);
+        var cap = int.min (total - reader_min, (int) (usable * MESSAGE_LIST_SHARE));
+        return cap.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
+    }
+
+    /* Preference while it fits under the cap; under pressure the list follows
+     * the cap (1px list per 2px reader) and grows back to the preference. */
+    private int message_list_target_width (int total, int reader_min) {
+        return int.min (this.message_pane_preferred, message_list_cap (total, reader_min));
+    }
+
+    private int split_mail_list_width_for (ListReaderSplit frame, int size) {
+        if (!this.reading_pane_split || size <= MAIL_SPLIT_HANDLE)
+            return -1;
+        return message_list_target_width (size, measure_reader_chrome_min ());
+    }
+
+    private int message_split_list_width_for (ListReaderSplit frame, int size) {
+        if (this.reading_pane_split
+            || this.message_split.orientation != Gtk.Orientation.HORIZONTAL
+            || size <= MAIL_SPLIT_HANDLE)
+            return -1;
+        return message_list_target_width (size, READER_PANE_MIN);
+    }
+
+    /* Handle drag: save what the user chose. Dragging against the cap must
+     * not lower a wider saved preference. */
+    private void commit_message_pane_preferred (int pos, int total, int reader_min) {
+        var clamped = pos.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
+        if (total > MAIL_SPLIT_HANDLE) {
+            var cap = message_list_cap (total, reader_min);
+            if (clamped >= cap)
+                clamped = int.max (this.message_pane_preferred, cap);
+        }
+        if (clamped == this.message_pane_preferred)
+            return;
+        this.message_pane_preferred = clamped;
+        this.settings.set_int ("message-pane-width", clamped);
+    }
+
+    private void apply_message_pane_preferred () {
+        this.split_mail.queue_allocate ();
+        this.message_split.queue_allocate ();
     }
 
     private void enter_split_reading_headers () {
-        var pos = this.message_split.position.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
         detach_mail_chrome ();
         this.message_split.start_child = null;
         this.message_split.end_child = null;
@@ -6891,33 +7069,34 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.reader_mail_slot.child = this.reader_bin;
 
         this.list_header.title_widget = this.conversation_title;
-        this.list_header.pack_end (this.conversation_button);
+        this.list_header.pack_start (this.folder_pane_button);
+        this.list_header.pack_end (this.search_toggle_button);
         this.list_header.pack_end (this.unread_filter_button);
+        this.list_header.pack_end (this.conversation_button);
 
         this.reader_header.pack_start (this.compose_button);
-        this.reader_header.pack_start (this.message_search);
         this.reader_header.pack_end (this.menu_button);
         this.reader_header.pack_end (this.conversation_sync_spinner);
 
         this.unified_mail.visible = false;
         this.split_mail.visible = true;
         this.clamping_split_mail = true;
-        this.split_mail.position = pos;
+        this.split_mail.position = this.message_pane_preferred.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
         this.clamping_split_mail = false;
     }
 
     private void enter_unified_reading_headers () {
-        var pos = this.split_mail.position.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
         detach_mail_chrome ();
         this.list_mail_slot.child = null;
         this.reader_mail_slot.child = null;
         this.message_split.start_child = this.list_bin;
         this.message_split.end_child = this.reader_bin;
 
+        this.conversation_header.pack_start (this.folder_pane_button);
         this.conversation_header.pack_start (this.compose_button);
-        this.conversation_header.pack_start (this.unread_filter_button);
         this.conversation_header.pack_start (this.conversation_button);
-        this.conversation_header.pack_start (this.message_search);
+        this.conversation_header.pack_start (this.unread_filter_button);
+        this.conversation_header.pack_start (this.search_toggle_button);
         this.conversation_header.title_widget = this.conversation_title;
         this.conversation_header.pack_end (this.menu_button);
         this.conversation_header.pack_end (this.conversation_sync_spinner);
@@ -6925,15 +7104,16 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.split_mail.visible = false;
         this.unified_mail.visible = true;
         this.clamping_message_pane = true;
-        this.message_split.position = pos;
+        this.message_split.position = this.message_pane_preferred.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
         this.clamping_message_pane = false;
     }
 
     private void detach_mail_chrome () {
         header_detach (this.compose_button);
+        header_detach (this.folder_pane_button);
         header_detach (this.unread_filter_button);
         header_detach (this.conversation_button);
-        header_detach (this.message_search);
+        header_detach (this.search_toggle_button);
         header_detach (this.menu_button);
         header_detach (this.conversation_sync_spinner);
         if (this.conversation_header.title_widget == this.conversation_title)
@@ -6955,57 +7135,172 @@ public class Mail.Window : Adw.ApplicationWindow {
             ((Gtk.Box) parent).remove (widget);
     }
 
-    private void update_search_field_width () {
-        var narrow = this.get_width () > 0 && this.get_width () < 1100;
-        if (this.reading_pane_split)
-            this.message_search.width_request = narrow ? 240 : 330;
-        else
-            this.message_search.width_request = narrow ? 180 : 220;
-    }
-
     private void on_message_pane_resized () {
-        if (this.clamping_message_pane || this.reading_pane_split)
+        if (this.clamping_message_pane || this.reading_pane_split
+            || this.message_split_frame.allocating
+            || this.message_split.orientation != Gtk.Orientation.HORIZONTAL)
             return;
-
-        var pos = this.message_split.position;
-        var clamped = pos.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
-        if (clamped != pos) {
-            this.clamping_message_pane = true;
-            this.message_split.position = clamped;
-            this.clamping_message_pane = false;
-        }
-
-        this.settings.set_int ("message-pane-width", clamped);
+        commit_message_pane_preferred (
+            this.message_split.position, this.message_split.get_width (), READER_PANE_MIN);
     }
 
     private void on_split_mail_resized () {
-        if (this.clamping_split_mail || !this.reading_pane_split)
+        if (this.clamping_split_mail || !this.reading_pane_split
+            || this.split_mail_frame.allocating)
             return;
-
-        var pos = this.split_mail.position;
-        var clamped = pos.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX);
-        if (clamped != pos) {
-            this.clamping_split_mail = true;
-            this.split_mail.position = clamped;
-            this.clamping_split_mail = false;
-        }
-
-        this.settings.set_int ("message-pane-width", clamped);
+        commit_message_pane_preferred (
+            this.split_mail.position, this.split_mail.get_width (), measure_reader_chrome_min ());
     }
 
-    private void on_folder_pane_resized () {
-        if (this.clamping_pane)
+    private void bind_folder_pane_narrow_breakpoint () {
+        var bp = new Adw.Breakpoint (new Adw.BreakpointCondition.length (
+            Adw.BreakpointConditionLengthType.MAX_WIDTH,
+            FOLDER_PANE_NARROW_SP,
+            Adw.LengthUnit.SP
+        ));
+        /* Only setter — Adw animates collapsed; do not also set it in Vala. */
+        bp.add_setter (this.folder_pane_split, "collapsed", true);
+        add_breakpoint (bp);
+        this.folder_pane_narrow_break = bp;
+    }
+
+    private void on_folder_pane_window_mapped () {
+        if (!this.folder_pane_surface_bound) {
+            var surface = get_surface ();
+            if (surface != null) {
+                surface.notify["width"].connect (queue_folder_pane_width_sync);
+                surface.notify["height"].connect (queue_folder_pane_width_sync);
+                this.folder_pane_surface_bound = true;
+            }
+        }
+        queue_folder_pane_width_sync ();
+    }
+
+    private void queue_folder_pane_width_sync () {
+        if (this.folder_pane_width_idle != 0 || this.tearing_down)
+            return;
+        this.folder_pane_width_idle = Idle.add (() => {
+            this.folder_pane_width_idle = 0;
+            if (!this.tearing_down)
+                sync_folder_pane_to_window_width ();
+            return Source.REMOVE;
+        });
+    }
+
+    private void cancel_folder_pane_hide () {
+        if (this.folder_pane_hide_source == 0)
+            return;
+        Source.remove (this.folder_pane_hide_source);
+        this.folder_pane_hide_source = 0;
+    }
+
+    /* Breakpoint owns collapsed (animated). On collapse: keep sidebar visible
+     * briefly so Adw can run dock→overlay, then close the overlay (slide-out).
+     * On expand: restore preference — Adw runs overlay/dock slide-in. */
+    private void on_folder_pane_collapsed () {
+        if (this.folder_pane_split.collapsed) {
+            this.folder_pane_narrow = true;
+            this.folder_pane_overlay_wanted = false;
+            cancel_folder_pane_hide ();
+            if (this.folder_pane_split.show_sidebar) {
+                this.folder_pane_hide_source = Timeout.add (280, () => {
+                    this.folder_pane_hide_source = 0;
+                    if (this.tearing_down
+                        || !this.folder_pane_split.collapsed
+                        || this.folder_pane_overlay_wanted)
+                        return Source.REMOVE;
+                    set_folder_pane_sidebar (false);
+                    return Source.REMOVE;
+                });
+            } else {
+                sync_folder_pane_button (false);
+            }
+        } else {
+            cancel_folder_pane_hide ();
+            this.folder_pane_narrow = false;
+            this.folder_pane_overlay_wanted = false;
+            apply_folder_pane (this.settings.get_boolean ("show-mail-folders-pane"));
+        }
+        update_window_width_request ();
+    }
+
+    private void sync_folder_pane_to_window_width () {
+        if (this.tearing_down)
             return;
 
-        var pos = this.content_split.position;
-        var clamped = pos.clamp (FOLDER_PANE_MIN, FOLDER_PANE_MAX);
-        if (clamped != pos) {
-            this.clamping_pane = true;
-            this.content_split.position = clamped;
-            this.clamping_pane = false;
+        /* Adw reallocates the sidebar from fraction×width on its own —
+         * do not rewrite max/fraction here or the pane stays pinned. */
+        update_window_width_request ();
+        ensure_split_reader_min ();
+    }
+
+    private void apply_folder_pane_chrome () {
+        this.folder_pane_split.sidebar_width_unit = Adw.LengthUnit.SP;
+        this.folder_pane_split.min_sidebar_width = FOLDER_PANE_MIN;
+        this.folder_pane_split.max_sidebar_width = FOLDER_PANE_MAX;
+        this.folder_pane_split.sidebar_width_fraction = FOLDER_PANE_FRACTION;
+    }
+
+    private void sync_folder_pane_button (bool show) {
+        this.syncing_folder_pane_toggle = true;
+        this.folder_pane_button.active = show;
+        this.syncing_folder_pane_toggle = false;
+        this.folder_pane_button.tooltip_text = show
+            ? _("Hide folders")
+            : _("Show folders");
+    }
+
+    private void set_folder_pane_sidebar (bool show) {
+        if (this.folder_pane_split.show_sidebar == show) {
+            sync_folder_pane_button (show);
+            return;
+        }
+        this.syncing_folder_pane_toggle = true;
+        this.folder_pane_split.show_sidebar = show;
+        this.syncing_folder_pane_toggle = false;
+        sync_folder_pane_button (show);
+    }
+
+    private void apply_folder_pane (bool show) {
+        if (!this.folder_pane_split.collapsed)
+            apply_folder_pane_chrome ();
+        set_folder_pane_sidebar (show);
+    }
+
+    private void on_folder_pane_show_sidebar () {
+        if (this.syncing_folder_pane_toggle)
+            return;
+
+        var show = this.folder_pane_split.show_sidebar;
+        sync_folder_pane_button (show);
+        /* Overlay open/close while collapsed is temporary; docked toggles
+         * persist the preference for restore when the breakpoint lifts. */
+        if (this.folder_pane_split.collapsed)
+            this.folder_pane_overlay_wanted = show;
+        else
+            this.settings.set_boolean ("show-mail-folders-pane", show);
+    }
+
+    private void on_folder_pane_toggled () {
+        if (this.syncing_folder_pane_toggle)
+            return;
+
+        var show = this.folder_pane_button.active;
+        this.folder_pane_button.tooltip_text = show
+            ? _("Hide folders")
+            : _("Show folders");
+        if (this.folder_pane_split.collapsed) {
+            this.folder_pane_overlay_wanted = show;
+            cancel_folder_pane_hide ();
+            this.folder_pane_split.show_sidebar = show;
+            return;
         }
 
-        this.settings.set_int ("folder-pane-width", clamped);
+        this.folder_pane_overlay_wanted = false;
+        this.folder_pane_split.show_sidebar = show;
+        this.settings.set_boolean ("show-mail-folders-pane", show);
+        update_window_width_request ();
+        ensure_split_reader_min ();
     }
 
     private void on_toggle_sidebar () {
@@ -10665,8 +10960,8 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.settings.set_int ("window-height", get_height ().clamp (WINDOW_MIN_HEIGHT, 4000));
         this.settings.set_boolean ("window-maximized", maximized);
         this.settings.set_boolean ("show-folder-sidebar", this.sidebar_button.active);
-        this.settings.set_int ("folder-pane-width", this.content_split.position.clamp (FOLDER_PANE_MIN, FOLDER_PANE_MAX));
-        this.settings.set_int ("message-pane-width", this.message_split.position.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX));
+        this.settings.set_int ("folder-pane-width", FOLDER_PANE_MAX);
+        this.settings.set_int ("message-pane-width", this.message_pane_preferred.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX));
     }
 
     private void teardown_on_close () {
@@ -10680,6 +10975,11 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.mail_session?.persist_mutation_registry_now ();
         this.mail_session?.flush_prefetch_progress ();
 
+        cancel_folder_pane_hide ();
+        if (this.folder_pane_width_idle != 0) {
+            Source.remove (this.folder_pane_width_idle);
+            this.folder_pane_width_idle = 0;
+        }
         if (this.sync_source != 0) {
             Source.remove (this.sync_source);
             this.sync_source = 0;
@@ -10803,5 +11103,78 @@ public class Mail.MessageDragPaintable : Object, Gdk.Paintable {
 
     public int get_intrinsic_height () {
         return this.logical_height;
+    }
+}
+
+/* Wraps the list + reader Gtk.Paned (final in GTK4). The list width is
+ * decided in size_allocate from the real width of this allocation, so window
+ * resizes never lag a frame behind or depend on a guessed window width.
+ * Plain Gtk.Widget on purpose: widgets with a layout manager (Adw.Bin) never
+ * get their size_allocate vfunc called. */
+public class Mail.ListReaderSplit : Gtk.Widget {
+    private Gtk.Widget? _child;
+
+    public Gtk.Widget? child {
+        get { return this._child; }
+        set {
+            if (this._child == value)
+                return;
+            if (this._child != null)
+                this._child.unparent ();
+            this._child = value;
+            if (this._child != null)
+                this._child.set_parent (this);
+        }
+    }
+
+    /* True while GTK lays the split out: position changes are not user drags. */
+    public bool allocating;
+
+    /* Start-child size for this allocation, or -1 to keep the position. */
+    public signal int list_width_for (int size);
+
+    public override void dispose () {
+        this.child = null;
+        base.dispose ();
+    }
+
+    public override Gtk.SizeRequestMode get_request_mode () {
+        return this._child != null
+            ? this._child.get_request_mode ()
+            : Gtk.SizeRequestMode.CONSTANT_SIZE;
+    }
+
+    public override void compute_expand_internal (out bool hexpand_p, out bool vexpand_p) {
+        hexpand_p = this._child != null && this._child.visible
+            && this._child.compute_expand (Gtk.Orientation.HORIZONTAL);
+        vexpand_p = this._child != null && this._child.visible
+            && this._child.compute_expand (Gtk.Orientation.VERTICAL);
+    }
+
+    public override void measure (Gtk.Orientation orientation, int for_size,
+                                  out int minimum, out int natural,
+                                  out int minimum_baseline, out int natural_baseline) {
+        minimum = 0;
+        natural = 0;
+        minimum_baseline = -1;
+        natural_baseline = -1;
+        if (this._child != null && this._child.visible)
+            this._child.measure (orientation, for_size, out minimum, out natural,
+                                 out minimum_baseline, out natural_baseline);
+    }
+
+    public override void size_allocate (int width, int height, int baseline) {
+        if (this._child == null || !this._child.visible)
+            return;
+        var paned = this._child as Gtk.Paned;
+        this.allocating = true;
+        if (paned != null) {
+            var size = paned.orientation == Gtk.Orientation.HORIZONTAL ? width : height;
+            var target = list_width_for (size);
+            if (target >= 0 && target != paned.position)
+                paned.position = target;
+        }
+        this._child.allocate (width, height, baseline, null);
+        this.allocating = false;
     }
 }

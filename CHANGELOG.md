@@ -18,7 +18,20 @@ refactors unless they affect behaviour.
 
 
 ## [Unreleased](https://github.com/stalvatero/letter/compare/v1.6.0...HEAD)
-- Nothing for now.
+
+### Changed
+
+- Important messages show an icon with a tooltip instead of a labelled pill;
+  the reader action row clips instead of raising the pane (and window) minimum
+  width, so menu / minimize / maximize / close stay reachable while resizing.
+- Folder and message panes resize more like GNOME native Gtk4 apps.
+- For greater visual consistency and an improved user experience, the search bar
+  has been removed from the reading pane. A search icon is now located in the
+  message list panel (which can also be triggered via the shortcut Ctrl+F); 
+  clicking it activates the search bar within the appropriate pane.
+  Pressing the Escape key or clicking the search icon again will close the search bar.
+- Search chips scroll horizontally in one line instead of wrapping and growing
+  the toolbar.
 
 
 ## [1.6.0](https://github.com/stalvatero/letter/compare/v1.5.0...v1.6.0)

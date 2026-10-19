@@ -4,7 +4,8 @@ public class Mail.SearchField : Gtk.Widget {
     public signal void stopped ();
 
     private Gtk.Box bar;
-    private Adw.WrapBox flow;
+    private Gtk.Box flow;
+    private Gtk.ScrolledWindow flow_scrolled;
     private Gtk.Text input;
     private Gtk.Button clear_button;
     private Gtk.Popover? suggest_popover;
@@ -173,11 +174,7 @@ public class Mail.SearchField : Gtk.Widget {
         hexpand = false;
         vexpand = false;
         valign = Gtk.Align.CENTER;
-        /* Same height at rest and while typing — Adwaita entry metrics otherwise
-         * shrink the empty field below the toolbar buttons. */
-        height_request = 28;
         add_css_class ("search");
-        add_css_class ("mail-search-field");
 
         this.bar = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4) {
             hexpand = true,
@@ -192,18 +189,29 @@ public class Mail.SearchField : Gtk.Widget {
         };
         icon.add_css_class ("dim-label");
 
-        this.flow = new Adw.WrapBox () {
-            hexpand = true,
+        this.flow = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4) {
+            hexpand = false,
             vexpand = false,
             valign = Gtk.Align.CENTER,
-            halign = Gtk.Align.FILL,
-            child_spacing = 4,
-            line_spacing = 2,
-            justify = Adw.JustifyMode.NONE,
-            line_homogeneous = false,
-            wrap_policy = Adw.WrapPolicy.NATURAL,
         };
         this.flow.add_css_class ("mail-search-flow");
+
+        this.flow_scrolled = new Gtk.ScrolledWindow () {
+            hexpand = true,
+            vexpand = false,
+            height_request = 24,
+            min_content_width = 0,
+            min_content_height = 24,
+            max_content_height = 24,
+            /* AUTOMATIC so many chips stay reachable; overlay keeps chrome thin. */
+            hscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
+            vscrollbar_policy = Gtk.PolicyType.NEVER,
+            overlay_scrolling = true,
+            propagate_natural_width = false,
+            propagate_natural_height = false,
+            child = this.flow,
+        };
+        this.flow_scrolled.add_css_class ("mail-search-flow-scroll");
 
         this.input = new Gtk.Text () {
             hexpand = true,
@@ -246,7 +254,7 @@ public class Mail.SearchField : Gtk.Widget {
 
         this.flow.append (this.input);
         this.bar.append (icon);
-        this.bar.append (this.flow);
+        this.bar.append (this.flow_scrolled);
         this.bar.append (this.clear_button);
 
         var click = new Gtk.GestureClick ();
@@ -415,6 +423,11 @@ public class Mail.SearchField : Gtk.Widget {
         Gtk.Widget? after = this.chips.length > 0 ? this.chips[this.chips.length - 1].holder : null;
         this.flow.insert_child_after (chip.holder, after);
         this.chips.add (chip);
+        Idle.add (() => {
+            var adjustment = this.flow_scrolled.hadjustment;
+            adjustment.value = adjustment.upper - adjustment.page_size;
+            return Source.REMOVE;
+        });
         if (notify)
             query_changed ();
         sync_chrome ();

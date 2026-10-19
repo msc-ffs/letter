@@ -202,85 +202,96 @@ template $MailWindow: Adw.ApplicationWindow {
           }
         };
 
-        content: Gtk.Paned content_split {
-          wide-handle: true;
-          position: 280;
-          resize-start-child: false;
-          shrink-start-child: false;
-
-        start-child: Adw.ToolbarView {
-          width-request: 200;
-
-          [top]
-          Adw.HeaderBar folder_header {
-            show-start-title-buttons: false;
-            show-end-title-buttons: false;
-
-            styles [
-              "letter-toolbar",
-            ]
-
-            [start]
-            ToggleButton sidebar_button {
-              icon-name: "sidebar-show-symbolic";
-              tooltip-text: _("Toggle Sidebar");
-            }
-
-            title-widget: Adw.WindowTitle folder_title {
-              title: _("Folders");
-            };
-          }
-
-          content: Adw.Bin folder_bin {
-            child: Adw.StatusPage no_folders_page {
-              icon-name: "folder-symbolic";
-              title: _("Select an Account");
-              description: _("Choose an account in the sidebar to load its folders.");
-              valign: center;
-            };
-          };
-
-          [bottom]
-          Gtk.Box folder_status_bar {
-            visible: false;
-            spacing: 8;
-            hexpand: true;
-            margin-start: 10;
-            margin-end: 10;
-            margin-top: 4;
-            margin-bottom: 6;
-
-            styles [
-              "folder-status-bar",
-            ]
-
-            Adw.Spinner {
-              width-request: 14;
-              height-request: 14;
-            }
-
-            Gtk.Label folder_status_label {
-              hexpand: true;
-              xalign: 0;
-              ellipsize: end;
-              use-markup: false;
-
-              styles [
-                "caption",
-                "dim-label",
-              ]
-            }
-          }
-        };
-
-        /* Unified shell (bottom / hidden reading pane) keeps one header above
-         * the list+reader paned. Split shell (right) puts a header in each
-         * pane so the handle cuts through the chrome. Widgets are reparented
-         * in apply_reading_pane(). */
-        end-child: Gtk.Box mail_area {
-          orientation: horizontal;
+        /* Folders: Adw sizes the sidebar as fraction×width in [min, max]
+         * (same model as Nautilus/libadwaita). Under 920sp it collapses. */
+        content: Adw.OverlaySplitView folder_pane_split {
+          pin-sidebar: false;
+          show-sidebar: true;
+          min-sidebar-width: 180;
+          max-sidebar-width: 260;
+          sidebar-width-fraction: 0.21;
           hexpand: true;
           vexpand: true;
+
+          styles [
+            "folder-pane-split",
+          ]
+
+          sidebar: Adw.ToolbarView folder_mail {
+            styles [
+              "folder-mail-pane",
+            ]
+
+            [top]
+            Adw.HeaderBar folder_header {
+              show-start-title-buttons: false;
+              show-end-title-buttons: false;
+
+              styles [
+                "letter-toolbar",
+              ]
+
+              [start]
+              ToggleButton sidebar_button {
+                icon-name: "sidebar-show-symbolic";
+                tooltip-text: _("Toggle Sidebar");
+              }
+
+              title-widget: Adw.WindowTitle folder_title {
+                title: _("Folders");
+              };
+            }
+
+            content: Adw.Bin folder_bin {
+              child: Adw.StatusPage no_folders_page {
+                icon-name: "folder-symbolic";
+                title: _("Select an Account");
+                description: _("Choose an account in the sidebar to load its folders.");
+                valign: center;
+              };
+            };
+
+            [bottom]
+            Gtk.Box folder_status_bar {
+              visible: false;
+              spacing: 8;
+              hexpand: true;
+              margin-start: 10;
+              margin-end: 10;
+              margin-top: 4;
+              margin-bottom: 6;
+
+              styles [
+                "folder-status-bar",
+              ]
+
+              Adw.Spinner {
+                width-request: 14;
+                height-request: 14;
+              }
+
+              Gtk.Label folder_status_label {
+                hexpand: true;
+                xalign: 0;
+                ellipsize: end;
+                use-markup: false;
+
+                styles [
+                  "caption",
+                  "dim-label",
+                ]
+              }
+            }
+          };
+
+          /* Unified shell (bottom / hidden reading pane) keeps one header above
+           * the list+reader paned. Split shell (right) puts a header in each
+           * pane so the handle cuts through the chrome. Widgets are reparented
+           * in apply_reading_pane(). */
+          content: Gtk.Box mail_area {
+            orientation: horizontal;
+            hexpand: true;
+            vexpand: true;
 
           Adw.ToolbarView unified_mail {
             hexpand: true;
@@ -338,11 +349,23 @@ template $MailWindow: Adw.ApplicationWindow {
               }
 
               [start]
-              $MailSearchField message_search {
-                placeholder-text: _("Search");
-                width-request: 220;
-                hexpand: true;
-                valign: center;
+              ToggleButton search_toggle_button {
+                icon-name: "system-search-symbolic";
+                tooltip-text: _("Search");
+
+                styles [
+                  "search-toggle",
+                ]
+              }
+
+              [start]
+              ToggleButton folder_pane_button {
+                icon-name: "sidebar-show-symbolic";
+                tooltip-text: _("Hide folders");
+
+                styles [
+                  "folder-pane-toggle",
+                ]
               }
 
               title-widget: Adw.WindowTitle conversation_title {
@@ -370,11 +393,12 @@ template $MailWindow: Adw.ApplicationWindow {
               }
             }
 
-            content: Gtk.Paned message_split {
+            content: $MailListReaderSplit message_split_frame {
+            child: Gtk.Paned message_split {
               wide-handle: true;
               position: 360;
               resize-start-child: false;
-              shrink-start-child: false;
+              shrink-start-child: true;
 
               start-child: Adw.Bin list_bin {
                 width-request: 260;
@@ -406,16 +430,21 @@ template $MailWindow: Adw.ApplicationWindow {
                 };
               };
             };
+            };
           }
 
-          Gtk.Paned split_mail {
+          $MailListReaderSplit split_mail_frame {
+          child: Gtk.Paned split_mail {
             visible: false;
             hexpand: true;
             vexpand: true;
             wide-handle: true;
             position: 360;
+            /* Extra window width goes to the reader; list stays at the
+             * user preference (restored in apply_message_pane_preferred). */
             resize-start-child: false;
-            shrink-start-child: false;
+            shrink-start-child: true;
+            shrink-end-child: false;
 
             styles [
               "split-mail",
@@ -449,7 +478,8 @@ template $MailWindow: Adw.ApplicationWindow {
             end-child: Adw.ToolbarView reader_mail {
               hexpand: true;
               vexpand: true;
-              width-request: 280;
+              /* Header chrome only — action bar clips inside the reader. */
+              width-request: 320;
 
               [top]
               Adw.HeaderBar reader_header {
@@ -470,9 +500,10 @@ template $MailWindow: Adw.ApplicationWindow {
                 vexpand: true;
               };
             };
+          };
           }
         };
-      };
+        };
     }
   };
   };
@@ -482,8 +513,18 @@ template $MailWindow: Adw.ApplicationWindow {
 
     setters {
       folder_split.collapsed: true;
+      compose_label.visible: true;
+    }
+  }
+
+  /* Folder-pane narrow mode is owned in Window (width check + apply/unapply).
+   * A blp collapsed setter alone chatters during resize and re-shows the pane. */
+
+  Adw.Breakpoint {
+    condition ("max-width: 840sp")
+
+    setters {
       compose_label.visible: false;
-      message_search.width-request: 180;
     }
   }
 }

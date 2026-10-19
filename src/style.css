@@ -12,10 +12,14 @@
   border-right: 1px solid var(--border-color);
 }
 
-/* Split reading-pane right: keep a gap before the main menu.
- * GTK CSS has no margin-end; physical margin-right matches the rest of this file. */
-.reader-header .mail-search-field {
-  margin-right: 8px;
+.folder-mail-pane {
+  background: var(--sidebar-bg-color);
+  border-right: 1px solid var(--border-color);
+}
+
+.folder-mail-pane > headerbar,
+.folder-mail-pane > .toolbar {
+  background: var(--sidebar-bg-color);
 }
 
 .account-rail {
@@ -175,6 +179,12 @@
   background: var(--view-bg-color);
 }
 
+/* Action row lives in a scrolled clip so the important pill cannot inflate
+ * the split reader minimum and shove window controls off the right edge. */
+.message-reader > scrolledwindow {
+  min-width: 0;
+}
+
 .message-action-bar.list-action-bar {
   padding: 4px 8px 2px;
   background: color-mix(in srgb, var(--view-fg-color) 4%, var(--view-bg-color));
@@ -237,7 +247,8 @@ headerbar button.compose-send {
 }
 
 headerbar button.unread-filter:checked,
-headerbar button.conversation-toggle:checked {
+headerbar button.conversation-toggle:checked,
+headerbar button.search-toggle:checked {
   background: color-mix(in srgb, var(--accent-bg-color) 28%, transparent);
   color: var(--accent-color);
 }
@@ -466,10 +477,8 @@ webview.message-body {
 
 .priority-badge {
   margin: 0;
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: #b42318;
-  background: color-mix(in srgb, #b42318 12%, var(--view-bg-color));
+  padding: 2px;
+  background: transparent;
 }
 
 .priority-badge-icon {
@@ -783,8 +792,7 @@ button.recipient-more label {
   color: var(--accent-color);
 }
 
-/* Keep rest / focus / chips at the same 28px as toolbar buttons. */
-entry.mail-search-field,
+/* Search field inside SearchBar — same 28px chrome as toolbar buttons. */
 .mail-search-field {
   border-radius: 8px;
   background: color-mix(in srgb, var(--headerbar-fg-color) 8%, transparent);
@@ -796,18 +804,25 @@ entry.mail-search-field,
   transition: box-shadow 180ms ease-out;
 }
 
-entry.mail-search-field:focus,
-entry.mail-search-field:focus-within,
 .mail-search-field:focus-within {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-color) 78%, transparent);
-  padding: 2px 4px;
-  min-height: 28px;
 }
 
 .mail-search-flow {
   min-height: 0;
   margin: 0;
   padding: 0;
+}
+
+.mail-search-flow-scroll {
+  min-height: 24px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.mail-search-flow-scroll scrollbar.horizontal {
+  min-height: 4px;
 }
 
 text.mail-search-input {

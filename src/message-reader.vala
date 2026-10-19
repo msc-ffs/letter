@@ -73,22 +73,19 @@ public class Mail.MessageReader : Gtk.Box {
         this.header_actions.valign = Gtk.Align.CENTER;
         this.header_actions.visible = false;
 
-        this.priority_badge = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4) {
+        this.priority_badge = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) {
             visible = false,
             hexpand = false,
             halign = Gtk.Align.START,
             valign = Gtk.Align.CENTER,
+            tooltip_text = _("Important message"),
         };
         this.priority_badge.add_css_class ("priority-badge");
-        var priority_icon = new Gtk.Image.from_icon_name ("mail-mark-important-symbolic");
-        priority_icon.add_css_class ("priority-badge-icon");
-        var priority_label = new Gtk.Label (_("Important message")) {
-            xalign = 0,
-            use_markup = false,
+        var priority_icon = new Gtk.Image.from_icon_name ("mail-mark-important-symbolic") {
+            pixel_size = 16,
         };
-        priority_label.add_css_class ("caption");
+        priority_icon.add_css_class ("priority-badge-icon");
         this.priority_badge.append (priority_icon);
-        this.priority_badge.append (priority_label);
 
         var actions_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
             hexpand = true,
@@ -97,7 +94,20 @@ public class Mail.MessageReader : Gtk.Box {
         actions_row.add_css_class ("reader-action-row");
         actions_row.append (this.priority_badge);
         actions_row.append (this.header_actions);
-        header.append (actions_row);
+        /* Do not let the action bar / important pill raise the reader pane
+         * (and window) minimum width — clip instead of pushing the close
+         * button off-screen. */
+        var actions_clip = new Gtk.ScrolledWindow () {
+            hexpand = true,
+            vexpand = false,
+            has_frame = false,
+            hscrollbar_policy = Gtk.PolicyType.NEVER,
+            vscrollbar_policy = Gtk.PolicyType.NEVER,
+            propagate_natural_width = false,
+            propagate_natural_height = true,
+        };
+        actions_clip.child = actions_row;
+        header.append (actions_clip);
 
         var meta_block = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) {
             margin_start = 20,

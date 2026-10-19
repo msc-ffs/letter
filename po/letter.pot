@@ -150,6 +150,10 @@ msgstr ""
 msgid "Search"
 msgstr ""
 
+#: src/window.vala
+msgid "Hide Search"
+msgstr ""
+
 #: src/application.vala:452
 msgid "New message"
 msgstr ""
@@ -336,6 +340,14 @@ msgstr ""
 
 #: src/window.vala:4145
 msgid "Show account list"
+msgstr ""
+
+#: src/window.vala
+msgid "Hide folders"
+msgstr ""
+
+#: src/window.vala
+msgid "Show folders"
 msgstr ""
 
 #: src/window.vala:4169

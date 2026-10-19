@@ -245,6 +245,10 @@ msgstr "Risultati della ricerca"
 msgid "Close Search"
 msgstr "Chiudi ricerca"
 
+#: src/window.vala
+msgid "Hide Search"
+msgstr "Nascondi ricerca"
+
 #: src/window.vala:517 src/window.vala:3916
 msgid "Showing conversations"
 msgstr "Vista conversazioni"
@@ -381,6 +385,14 @@ msgstr "Nascondi elenco account"
 #: src/window.vala:4145
 msgid "Show account list"
 msgstr "Mostra elenco account"
+
+#: src/window.vala
+msgid "Hide folders"
+msgstr "Nascondi cartelle"
+
+#: src/window.vala
+msgid "Show folders"
+msgstr "Mostra cartelle"
 
 #: src/window.vala:4169
 msgid "Offline — enable the service in Online Accounts settings"
