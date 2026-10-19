@@ -21,6 +21,8 @@ refactors unless they affect behaviour.
 
 ### Changed
 
+- Updated Brazilian Portuguese translation by
+  [Thiago Haeitmann](https://github.com/ThiagoHaeitmann).
 - Important messages show an icon with a tooltip instead of a labelled pill;
   the reader action row clips instead of raising the pane (and window) minimum
   width, so menu / minimize / maximize / close stay reachable while resizing.
