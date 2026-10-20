@@ -39,8 +39,29 @@ public class Mail.Conversation : Object {
             if (existing.uid == message.uid
                 && (existing.folder_full_name ?? "") == (message.folder_full_name ?? ""))
                 return;
+            /* Gmail: same physical mail under Inbox and All Mail (same UID).
+             * Only collapse when Message-ID matches too — bare UID equality is
+             * unsafe on normal IMAP (UIDs are per-folder). */
+            if (existing.uid != null && existing.uid.length > 0
+                && existing.uid == message.uid
+                && existing.msgid_hash != 0
+                && existing.msgid_hash == message.msgid_hash) {
+                if (in_list_folder (message) && !in_list_folder (existing))
+                    this.messages[i] = message;
+                return;
+            }
             if (!same_outgoing_send (existing, message))
                 continue;
+            /* Optimistic move into this folder must win over a leftover
+             * source-folder twin (same Message-ID). Otherwise group() drops
+             * the destination row until F5. Gmail label twins are not
+             * local_only moves — they still collapse via same_outgoing_send. */
+            if (is_optimistic_move (existing) && in_list_folder (existing))
+                return;
+            if (is_optimistic_move (message) && in_list_folder (message)) {
+                this.messages[i] = message;
+                return;
+            }
             if (message.is_placeholder)
                 return;
             if (existing.is_placeholder)
@@ -49,6 +70,16 @@ public class Mail.Conversation : Object {
         }
 
         this.messages.add (message);
+    }
+
+    private static bool is_optimistic_move (Message message) {
+        if (!message.local_only || message.outgoing)
+            return false;
+        if (message.uid != null
+            && (message.uid.has_prefix ("local-sent-")
+                || message.uid.has_prefix ("local-draft-")))
+            return false;
+        return true;
     }
 
     public bool contains (string uid, string? folder_full_name) {
@@ -474,6 +505,10 @@ public class Mail.Conversation : Object {
         for (int i = (int) messages.length - 1; i >= 0; i--) {
             if (!messages[i].is_placeholder)
                 continue;
+            /* Optimistic move headers are local_only but not outgoing sends —
+             * never drop them because another row shares Message-ID. */
+            if (!is_outgoing_placeholder (messages[i]))
+                continue;
             for (uint j = 0; j < messages.length; j++) {
                 if (j == i)
                     continue;
@@ -487,7 +522,17 @@ public class Mail.Conversation : Object {
         }
     }
 
+    private static bool is_outgoing_placeholder (Message message) {
+        if (message.uid != null
+            && (message.uid.has_prefix ("local-sent-") || message.uid.has_prefix ("local-draft-")))
+            return true;
+        return message.local_only && message.outgoing;
+    }
+
     public static bool same_outgoing_send (Message a, Message b) {
+        /* Same Message-ID collapses local-sent↔server and Gmail label twins.
+         * Optimistic cross-folder moves are handled in add_message so the
+         * destination local_only row is kept. */
         if (a.msgid_hash != 0 && a.msgid_hash == b.msgid_hash)
             return true;
         if (!a.outgoing || !b.outgoing)

@@ -312,15 +312,23 @@ msgid ""
 msgstr ""
 
 #: data/io.github.stalvatero.Letter.gschema.xml.in:107
-#: src/preferences-dialog.vala:203
-msgid "Recover broken remote images"
+#: src/preferences-dialog.vala:196
+msgid "Retry failed remote images"
 msgstr ""
 
 #: data/io.github.stalvatero.Letter.gschema.xml.in:108
 msgid ""
-"Download missing issuer certificates to recover HTTPS images from trusted "
-"senders. This contacts additional servers and may omit connection-specific "
-"revocation checks."
+"If an image from a trusted sender fails to load because the site’s HTTPS "
+"certificate chain is incomplete, download it again with a recovery path that "
+"can fetch missing intermediate certificates. Off by default: uses extra "
+"network requests and may skip some revocation checks."
+msgstr ""
+
+#: src/preferences-dialog.vala:197
+msgid ""
+"If an image from a trusted sender fails to load because the site’s HTTPS "
+"certificate chain is incomplete, download it again with a stricter recovery "
+"path. Off by default; uses extra network requests."
 msgstr ""
 
 #: data/io.github.stalvatero.Letter.gschema.xml.in:112
@@ -2279,12 +2287,6 @@ msgstr ""
 
 #: src/preferences-dialog.vala:182
 msgid "Never"
-msgstr ""
-
-#: src/preferences-dialog.vala:204
-msgid ""
-"Contact certificate providers for images from trusted senders. Some "
-"revocation checks are unavailable."
 msgstr ""
 
 #: src/preferences-dialog.vala:214

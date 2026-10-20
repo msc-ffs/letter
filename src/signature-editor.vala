@@ -20,7 +20,6 @@ public class Mail.SignatureEditorDialog : Adw.Dialog {
             sensitive = false,
         };
         this.save_button.add_css_class ("suggested-action");
-        this.save_button.add_css_class ("pill");
         this.save_button.clicked.connect (() => save.begin ());
 
         var header = new Adw.HeaderBar ();
@@ -46,8 +45,23 @@ public class Mail.SignatureEditorDialog : Adw.Dialog {
             update_save ();
         });
 
+        /* Tab from the title should land in the compose area, not walk the
+         * format toolbar (font / bold / color / …). */
+        var name_keys = new Gtk.EventControllerKey ();
+        name_keys.set_propagation_phase (Gtk.PropagationPhase.CAPTURE);
+        name_keys.key_pressed.connect ((keyval, keycode, state) => {
+            var mods = state & Gtk.accelerator_get_default_mod_mask ();
+            if (keyval != Gdk.Key.Tab || mods != 0)
+                return false;
+            this.editor.grab_focus ();
+            return true;
+        });
+        this.name_row.add_controller (name_keys);
+
         var toolbar = new FormatToolbar (this.editor);
         toolbar.insert_image.connect (() => prompt_image.begin ());
+        exclude_from_tab_chain (toolbar);
+        toolbar.realize.connect (() => exclude_from_tab_chain (toolbar));
 
         var editor_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
             hexpand = true,
@@ -123,6 +137,16 @@ public class Mail.SignatureEditorDialog : Adw.Dialog {
 
     private async void prompt_image () {
         yield ComposeExtras.prompt_insert_image (this, this.editor);
+    }
+
+    private static void exclude_from_tab_chain (Gtk.Widget widget) {
+        if (widget is Gtk.Popover)
+            return;
+
+        widget.focusable = false;
+        widget.focus_on_click = false;
+        for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ())
+            exclude_from_tab_chain (child);
     }
 }
 

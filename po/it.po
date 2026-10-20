@@ -746,6 +746,9 @@ msgstr "Cerca cartelle"
 msgid "No matching folders."
 msgstr "Nessuna cartella trovata."
 
+msgid "This folder cannot receive messages."
+msgstr "Questa cartella non può ricevere messaggi."
+
 #: src/window.vala:8925
 msgid "Move to Folder"
 msgstr "Sposta nella cartella"
@@ -1580,6 +1583,24 @@ msgstr "Aumenta rientro"
 
 #: src/compose-dialog.vala:934 src/compose-dialog.vala:4083
 #: src/format-toolbar.vala:76
+msgid "Text Style"
+msgstr "Stile testo"
+
+msgid "Insert Link"
+msgstr "Inserisci collegamento"
+
+msgid "Add Link"
+msgstr "Aggiungi collegamento"
+
+msgid "Edit Link"
+msgstr "Modifica collegamento"
+
+msgid "Web address"
+msgstr "Indirizzo web"
+
+msgid "Add"
+msgstr "Aggiungi"
+
 msgid "Insert Image"
 msgstr "Inserisci immagine"
 
@@ -1915,6 +1936,12 @@ msgstr "Dopo 5 secondi"
 msgid "Never"
 msgstr "Mai"
 
+msgid "Retry failed remote images"
+msgstr "Riprova le immagini remote non caricate"
+
+msgid "If an image from a trusted sender fails to load because the site’s HTTPS certificate chain is incomplete, download it again with a stricter recovery path. Off by default; uses extra network requests."
+msgstr "Se un’immagine di un mittente attendibile non si carica perché la catena di certificati HTTPS del sito è incompleta, scaricala di nuovo con un percorso di recupero più rigoroso. Disattivata di default; usa richieste di rete aggiuntive."
+
 #: src/preferences-dialog.vala:110
 msgid "Conversations"
 msgstr "Conversazioni"
@@ -1925,6 +1952,12 @@ msgstr "Raggruppa i messaggi correlati in conversazioni."
 
 msgid "Appearance"
 msgstr "Aspetto"
+
+msgid "Behavior"
+msgstr "Comportamento"
+
+msgid "Integrations"
+msgstr "Integrazioni"
 
 msgid "Application theme"
 msgstr "Tema applicazione"

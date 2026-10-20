@@ -271,6 +271,13 @@ public class Mail.Folder : Object {
         }
     }
 
+    /* Move / copy targets — [Gmail] is a label namespace, not a mailbox. */
+    public bool can_accept_messages {
+        get {
+            return !this.is_virtual_view && !this.is_gmail_namespace;
+        }
+    }
+
     public string leaf_name {
         owned get {
             var slash = this.full_name.last_index_of_char ('/');

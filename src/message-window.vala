@@ -433,7 +433,7 @@ public class Mail.MessageWindow : Adw.ApplicationWindow {
     }
 
     private async void choose_and_move () {
-        var destination = yield Window.pick_folder (this, this.folders, this.folder);
+        var destination = yield Window.pick_folder (this, this.folders, this.folder, 1, this.account);
         if (destination == null)
             return;
 

@@ -20,10 +20,17 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
     private GenericArray<string> font_families = new GenericArray<string> ();
     private Gtk.DropDown font_drop;
     private Gtk.DropDown size_drop;
-    private Gtk.ToggleButton bold_toggle;
-    private Gtk.ToggleButton italic_toggle;
-    private Gtk.ToggleButton underline_toggle;
-    private Gtk.ToggleButton strike_toggle;
+    private Gtk.ToggleButton? bold_toggle;
+    private Gtk.ToggleButton? italic_toggle;
+    private Gtk.ToggleButton? underline_toggle;
+    private Gtk.ToggleButton? strike_toggle;
+    private Gtk.Box format_style_box;
+    private Gtk.Popover format_style_popover;
+    private bool format_style_open;
+    private string format_bold = "0";
+    private string format_italic = "0";
+    private string format_underline = "0";
+    private string format_strike = "0";
     private HashTable<string, uint8> recent_drops = new HashTable<string, uint8> (str_hash, str_equal);
     private uint toolbar_live_idle;
     private bool force_close;
@@ -140,6 +147,7 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
             this.to_row.bind_contacts (mail_app.contacts);
             this.cc_row.bind_contacts (mail_app.contacts);
             this.bcc_row.bind_contacts (mail_app.contacts);
+            sync_prefer_account ();
         }
         this.bcc_row.visible = bcc != null && bcc.strip ().length > 0;
         this.subject_row = new Adw.EntryRow () {
@@ -822,8 +830,10 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
         }
 
         yield replace_editing_draft ();
-        app?.contacts.remember_recipients (to_recipients);
-        app?.contacts.remember_recipients (cc_recipients);
+        var bcc_recipients = this.bcc_row.recipients ();
+        app?.contacts.remember_recipients (to_recipients, account);
+        app?.contacts.remember_recipients (cc_recipients, account);
+        app?.contacts.remember_recipients (bcc_recipients, account);
 
         this.force_close = true;
         persist_size ();
@@ -919,14 +929,7 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
             vexpand = false,
             valign = Gtk.Align.CENTER,
         };
-        this.bold_toggle = format_toggle_button ("format-text-bold-symbolic", _("Bold"), "Bold");
-        this.italic_toggle = format_toggle_button ("format-text-italic-symbolic", _("Italic"), "Italic");
-        this.underline_toggle = format_toggle_button ("format-text-underline-symbolic", _("Underline"), "Underline");
-        this.strike_toggle = format_toggle_button ("format-text-strikethrough-symbolic", _("Strikethrough"), "Strikethrough");
-        formats.append (this.bold_toggle);
-        formats.append (this.italic_toggle);
-        formats.append (this.underline_toggle);
-        formats.append (this.strike_toggle);
+        formats.append (format_style_menu_button ());
         formats.append (color_menu_button (false));
         formats.append (color_menu_button (true));
         formats.append (command_button (
@@ -942,6 +945,7 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
         formats.append (command_button ("format-indent-less-symbolic", _("Decrease Indent"), "Outdent"));
         formats.append (command_button ("format-indent-more-symbolic", _("Increase Indent"), "Indent"));
         formats.append (emoji_button ());
+        formats.append (icon_action_button ("insert-link-symbolic", _("Insert Link"), () => prompt_edit_link.begin ()));
         formats.append (icon_action_button ("image-x-generic-symbolic", _("Insert Image"), () => prompt_insert_image.begin ()));
         formats.append (this.body_view.create_image_size_drop (() => this.toolbar_live));
         bar.append (formats);
@@ -1107,20 +1111,131 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
         return icon_action_button (icon, tooltip, () => this.body_view.apply_command (command));
     }
 
-    private Gtk.ToggleButton format_toggle_button (string icon, string tooltip, string command) {
+    private Gtk.Widget format_style_menu_button () {
+        /* Rebuild the four toggles every time the popover opens, with active
+         * already set from the last fmt| snapshot. Updating ToggleButtons
+         * while the popover is closed does not stick; constructing them
+         * mapped with the right active does (same as the old always-visible
+         * toolbar toggles). */
+        this.format_style_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4) {
+            margin_start = 6,
+            margin_end = 6,
+            margin_top = 6,
+            margin_bottom = 6,
+        };
+        this.format_style_box.add_css_class ("compose-format-actions");
+
+        this.format_style_popover = new Gtk.Popover () {
+            autohide = true,
+            has_arrow = true,
+            position = Gtk.PositionType.BOTTOM,
+            child = this.format_style_box,
+        };
+        this.format_style_popover.add_css_class ("compose-format-popover");
+        this.format_style_popover.notify["visible"].connect (() => {
+            if (this.format_style_popover.visible) {
+                this.format_style_open = true;
+                /* Pull a fresh measurement from the editor (via savedRange)
+                 * then rebuild toggles. The Vala fmt| cache alone is not
+                 * trustworthy across popover close/open. */
+                open_format_style_popover.begin ();
+            } else {
+                this.format_style_open = false;
+            }
+        });
+
+        var button = new Gtk.MenuButton () {
+            valign = Gtk.Align.CENTER,
+            tooltip_text = _("Text Style"),
+            icon_name = "format-text-rich-symbolic",
+            popover = this.format_style_popover,
+            always_show_arrow = false,
+            direction = Gtk.ArrowType.DOWN,
+            focus_on_click = false,
+        };
+        button.add_css_class ("flat");
+        button.add_css_class ("compose-format-menu");
+        rebuild_format_style_toggles ();
+        return button;
+    }
+
+    private async void open_format_style_popover () {
+        try {
+            string bold;
+            string italic;
+            string underline;
+            string strike;
+            if (yield this.body_view.pull_format_state (out bold, out italic, out underline, out strike)) {
+                this.format_bold = bold;
+                this.format_italic = italic;
+                this.format_underline = underline;
+                this.format_strike = strike;
+            }
+        } catch (Error e) {
+            debug ("Could not pull compose format state: %s", e.message);
+        }
+        if (this.format_style_open)
+            rebuild_format_style_toggles ();
+    }
+
+    private void rebuild_format_style_toggles () {
+        Gtk.Widget? child = this.format_style_box.get_first_child ();
+        while (child != null) {
+            var next = child.get_next_sibling ();
+            this.format_style_box.remove (child);
+            child = next;
+        }
+
+        this.bold_toggle = make_format_style_toggle (
+            "format-text-bold-symbolic", _("Bold"), "Bold", this.format_bold);
+        this.italic_toggle = make_format_style_toggle (
+            "format-text-italic-symbolic", _("Italic"), "Italic", this.format_italic);
+        this.underline_toggle = make_format_style_toggle (
+            "format-text-underline-symbolic", _("Underline"), "Underline", this.format_underline);
+        this.strike_toggle = make_format_style_toggle (
+            "format-text-strikethrough-symbolic", _("Strikethrough"), "Strikethrough", this.format_strike);
+        this.format_style_box.append (this.bold_toggle);
+        this.format_style_box.append (this.italic_toggle);
+        this.format_style_box.append (this.underline_toggle);
+        this.format_style_box.append (this.strike_toggle);
+    }
+
+    private Gtk.ToggleButton make_format_style_toggle (
+        string icon,
+        string tooltip,
+        string command,
+        string state
+    ) {
         var button = new Gtk.ToggleButton () {
             icon_name = icon,
             valign = Gtk.Align.CENTER,
             tooltip_text = tooltip,
             focus_on_click = false,
+            active = state == "1",
         };
         button.add_css_class ("flat");
+        if (state == "m")
+            button.add_css_class ("compose-format-mixed");
         button.toggled.connect (() => {
             if (!this.toolbar_live)
                 return;
             this.body_view.apply_command (command);
         });
         return button;
+    }
+
+    private void sync_format_style_toggles () {
+        if (!this.format_style_open)
+            return;
+        suppress_toolbar_commands ();
+        if (this.bold_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.bold_toggle, this.format_bold);
+        if (this.italic_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.italic_toggle, this.format_italic);
+        if (this.underline_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.underline_toggle, this.format_underline);
+        if (this.strike_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.strike_toggle, this.format_strike);
     }
 
     private Gtk.Button icon_action_button (string icon, string tooltip, owned FormatToolbar.VoidFunc action) {
@@ -1391,10 +1506,11 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
             : Gtk.INVALID_LIST_POSITION;
         if (this.size_drop.selected != size_sel)
             this.size_drop.selected = size_sel;
-        ComposeHtmlView.apply_format_toggle (this.bold_toggle, bold);
-        ComposeHtmlView.apply_format_toggle (this.italic_toggle, italic);
-        ComposeHtmlView.apply_format_toggle (this.underline_toggle, underline);
-        ComposeHtmlView.apply_format_toggle (this.strike_toggle, strike);
+        this.format_bold = bold;
+        this.format_italic = italic;
+        this.format_underline = underline;
+        this.format_strike = strike;
+        sync_format_style_toggles ();
     }
 
     private GenericSet<string> installed_font_names () {
@@ -1439,9 +1555,17 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
     }
 
     private void on_from_account_changed () {
+        sync_prefer_account ();
         reload_signature_model ();
         if (this.toolbar_live)
             apply_selected_signature.begin ();
+    }
+
+    private void sync_prefer_account () {
+        var account = selected_account ();
+        this.to_row.set_prefer_account (account);
+        this.cc_row.set_prefer_account (account);
+        this.bcc_row.set_prefer_account (account);
     }
 
     private void on_signature_selected () {
@@ -1472,6 +1596,10 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
     private async void prompt_insert_image () {
         yield ComposeExtras.prompt_insert_image (this, this.body_view);
         this.body_mutated = true;
+    }
+
+    private async void prompt_edit_link () {
+        yield ComposeExtras.prompt_edit_link (this, this.body_view);
     }
 
     private async void attach_files () {
@@ -1783,6 +1911,7 @@ public class Mail.ComposeHtmlView : Gtk.Box {
     private SimpleAction image_size_original;
     private SimpleAction image_delete;
     private SimpleAction unlink_action;
+    private SimpleAction link_action;
     private SimpleAction learn_spelling;
     private SimpleAction paste_match_style;
     private string[] spell_langs = {};
@@ -1943,6 +2072,7 @@ public class Mail.ComposeHtmlView : Gtk.Box {
         this.image_size_original = new SimpleAction ("compose-image-original", null);
         this.image_delete = new SimpleAction ("compose-image-delete", null);
         this.unlink_action = new SimpleAction ("compose-unlink", null);
+        this.link_action = new SimpleAction ("compose-link", null);
         /* Drive size/delete through in-page JS. The selected <img> is already
          * known there (contextmenu/click); relying on async current_image_id
          * made the context menu a no-op when the bridge lagged. */
@@ -1951,6 +2081,7 @@ public class Mail.ComposeHtmlView : Gtk.Box {
         this.image_size_original.activate.connect (() => run_compose_image_js ("applySize", "original"));
         this.image_delete.activate.connect (() => run_compose_image_js ("requestDelete", null));
         this.unlink_action.activate.connect (remove_current_link);
+        this.link_action.activate.connect (() => ComposeExtras.prompt_edit_link.begin (this, this));
         this.learn_spelling = new SimpleAction ("compose-learn-spelling", null);
         this.learn_spelling.activate.connect (() => learn_selected_spelling.begin ());
         this.paste_match_style = new SimpleAction ("compose-paste-match-style", null);
@@ -2440,9 +2571,12 @@ public class Mail.ComposeHtmlView : Gtk.Box {
             }
         }
 
+        menu.append (new WebKit.ContextMenuItem.separator ());
         if (hit.context_is_link ()) {
-            menu.append (new WebKit.ContextMenuItem.separator ());
+            menu.append (new WebKit.ContextMenuItem.from_gaction (this.link_action, _("Edit Link"), null));
             menu.append (new WebKit.ContextMenuItem.from_gaction (this.unlink_action, _("Remove Link"), null));
+        } else {
+            menu.append (new WebKit.ContextMenuItem.from_gaction (this.link_action, _("Add Link"), null));
         }
 
         if (hit.context_is_image ()) {
@@ -2552,8 +2686,84 @@ public class Mail.ComposeHtmlView : Gtk.Box {
     }
 
     public void apply_command (string command) {
+        if (command == "Bold" || command == "Italic" || command == "Underline"
+            || command == "Strikethrough") {
+            apply_style_command.begin (command, (obj, res) => {
+                try {
+                    apply_style_command.end (res);
+                } catch (Error e) {
+                    debug ("Could not apply compose style command: %s", e.message);
+                }
+            });
+            return;
+        }
         this.webview.grab_focus ();
         this.webview.execute_editing_command (command);
+    }
+
+    /* Restore the editor selection, run execCommand, and post fmt|… before
+     * returning so action state updates in the same turn as the click. */
+    public async void apply_style_command (string command) throws Error {
+        yield this.webview.evaluate_javascript (
+            "window.mailCompose && window.mailCompose.applyStyleCommand && window.mailCompose.applyStyleCommand(%s);".printf (
+                js_string (command)
+            ),
+            -1,
+            null,
+            null,
+            null
+        );
+    }
+
+    /* Ask the editor to re-post fmt|… so toolbar toggles follow the real
+     * selection (Ctrl+B / popover clicks / caret moves). */
+    public void request_format_state () {
+        this.webview.evaluate_javascript.begin (
+            "window.mailCompose && window.mailCompose.refreshFormat && window.mailCompose.refreshFormat();",
+            -1,
+            null,
+            null,
+            null,
+            (obj, res) => {
+                try {
+                    this.webview.evaluate_javascript.end (res);
+                } catch (Error e) {
+                    debug ("Could not refresh compose format state: %s", e.message);
+                }
+            }
+        );
+    }
+
+    /* Synchronous read of bold|italic|underline|strike for the saved editor
+     * range. Returns false when there is nothing trustworthy to measure. */
+    public async bool pull_format_state (
+        out string bold,
+        out string italic,
+        out string underline,
+        out string strike
+    ) throws Error {
+        bold = "0";
+        italic = "0";
+        underline = "0";
+        strike = "0";
+        var value = yield this.webview.evaluate_javascript (
+            "window.mailCompose && window.mailCompose.queryFormatState ? window.mailCompose.queryFormatState() : 'none';",
+            -1,
+            null,
+            null,
+            null
+        );
+        var raw = value.is_string () ? value.to_string () : "";
+        if (raw.length == 0 || raw == "none")
+            return false;
+        var parts = raw.split ("|");
+        if (parts.length < 4)
+            return false;
+        bold = parts[0];
+        italic = parts[1];
+        underline = parts[2];
+        strike = parts[3];
+        return true;
     }
 
     public void insert_text (string text) {
@@ -2638,6 +2848,13 @@ public class Mail.ComposeHtmlView : Gtk.Box {
                 return true;
             })));
         }
+        var link_trigger = Gtk.ShortcutTrigger.parse_string ("<Control>k");
+        if (link_trigger != null) {
+            shortcuts.add_shortcut (new Gtk.Shortcut (link_trigger, new Gtk.CallbackAction ((widget, args) => {
+                ComposeExtras.prompt_edit_link.begin (this, this);
+                return true;
+            })));
+        }
         add_controller (shortcuts);
 
         var keys = new Gtk.EventControllerKey ();
@@ -2687,7 +2904,57 @@ public class Mail.ComposeHtmlView : Gtk.Box {
             paste_and_match_style ();
             return true;
         }
+        if (key == Gdk.Key.k && !shift) {
+            ComposeExtras.prompt_edit_link.begin (this, this);
+            return true;
+        }
         return false;
+    }
+
+    public async string query_link_href () {
+        try {
+            yield wait_loaded ();
+            var value = yield this.webview.evaluate_javascript (
+                "window.mailCompose && window.mailCompose.linkHref ? window.mailCompose.linkHref() : '';",
+                -1,
+                null,
+                null,
+                null
+            );
+            return value.is_string () ? value.to_string () : "";
+        } catch (Error e) {
+            debug ("Could not read link: %s", e.message);
+            return "";
+        }
+    }
+
+    public void apply_link (string href) {
+        if (href.length == 0)
+            return;
+        this.webview.grab_focus ();
+        var js = "window.mailCompose && window.mailCompose.applyLink && window.mailCompose.applyLink(%s);".printf (
+            js_string (href)
+        );
+        this.webview.evaluate_javascript.begin (js, -1, null, null, null, (obj, res) => {
+            try {
+                this.webview.evaluate_javascript.end (res);
+            } catch (Error e) {
+                debug ("Could not apply link: %s", e.message);
+            }
+        });
+    }
+
+    public static string normalize_link_href (string raw) {
+        var href = raw.strip ();
+        if (href.length == 0)
+            return "";
+        if (Regex.match_simple ("^[a-zA-Z][a-zA-Z0-9+.-]*:", href))
+            return href;
+        if (href.has_prefix ("#") || href.has_prefix ("/") || href.has_prefix ("./"))
+            return href;
+        if (href.contains ("@") && !href.contains ("/") && !href.contains (" "))
+            return "mailto:" + href;
+        return "https://" + href;
     }
 
     public static string normalize_font_family (string font) {
@@ -2726,14 +2993,17 @@ public class Mail.ComposeHtmlView : Gtk.Box {
 
     public static void apply_format_toggle (Gtk.ToggleButton button, string state) {
         if (state == "m") {
-            button.active = false;
+            if (button.active)
+                button.active = false;
             if (!button.has_css_class ("compose-format-mixed"))
                 button.add_css_class ("compose-format-mixed");
             return;
         }
         if (button.has_css_class ("compose-format-mixed"))
             button.remove_css_class ("compose-format-mixed");
-        button.active = state == "1";
+        var want = state == "1";
+        if (button.active != want)
+            button.active = want;
     }
 
     public static int font_size_index (string size) {
@@ -3512,17 +3782,84 @@ blockquote:not(.mail-quote) {
                     return set.values().next().value;
                 }
 
-                var lastFmt = null;
-                function notifyFormatState() {
-                    if (selectedImg) {
-                        var imgFmt = 'fmt|||0|0|0|0';
-                        if (lastFmt !== imgFmt) {
-                            lastFmt = imgFmt;
-                            postCompose(imgFmt);
-                        }
+                var savedRange = null;
+                function saveSelection() {
+                    var sel = window.getSelection();
+                    if (!sel || !sel.rangeCount)
                         return;
+                    var node = sel.anchorNode;
+                    if (!node || !editor.contains(node))
+                        return;
+                    try {
+                        savedRange = sel.getRangeAt(0).cloneRange();
+                    } catch (err) {
                     }
+                }
+
+                function restoreSelection() {
+                    if (!savedRange)
+                        return false;
+                    try {
+                        var sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(savedRange.cloneRange());
+                        return true;
+                    } catch (err) {
+                        return false;
+                    }
+                }
+
+                function elementForRange(range) {
+                    if (!range)
+                        return null;
+                    var n = range.startContainer;
+                    if (!n)
+                        return null;
+                    if (n.nodeType === 3)
+                        return n.parentElement;
+                    if (n.nodeType === 1)
+                        return n;
+                    return null;
+                }
+
+                function formatRange() {
+                    var sel = window.getSelection();
+                    if (sel && sel.rangeCount) {
+                        var live = sel.getRangeAt(0);
+                        if (live && (editor.contains(live.startContainer)
+                            || (live.commonAncestorContainer
+                                && editor.contains(live.commonAncestorContainer))))
+                            return live;
+                    }
+                    return savedRange;
+                }
+
+                function measureFormatFlags() {
+                    /* Prefer the live selection; if the style popover stole
+                     * focus, fall back to savedRange. Returns null when there
+                     * is nothing trustworthy to measure. */
+                    var sel = window.getSelection();
+                    if ((!sel || !sel.rangeCount || !editor.contains(sel.anchorNode)) && savedRange)
+                        restoreSelection();
                     var textNodes = textNodesInSelection();
+                    var el = null;
+                    if (textNodes.length === 0) {
+                        el = elementForCaret();
+                        if (!(el && editor.contains(el))) {
+                            var fallback = formatRange();
+                            if (fallback) {
+                                el = elementForRange(fallback);
+                                if (el && editor.contains(el) && fallback.collapsed
+                                    && fallback.startContainer
+                                    && fallback.startContainer.nodeType === 3
+                                    && editor.contains(fallback.startContainer))
+                                    textNodes = [fallback.startContainer];
+                            }
+                        }
+                    }
+                    if (textNodes.length === 0 && !(el && editor.contains(el)))
+                        return null;
+
                     var fonts = new Set();
                     var sizes = new Set();
                     var boldSet = new Set();
@@ -3530,19 +3867,16 @@ blockquote:not(.mail-quote) {
                     var underlineSet = new Set();
                     var strikeSet = new Set();
                     if (textNodes.length === 0) {
-                        var el = elementForCaret();
-                        if (el && editor.contains(el)) {
-                            var famEl = fontForElement(el);
-                            if (famEl)
-                                fonts.add(famEl);
-                            var szEl = fontSizeForElement(el);
-                            if (szEl)
-                                sizes.add(szEl);
-                            boldSet.add(isBoldEl(el));
-                            italicSet.add(isItalicEl(el));
-                            underlineSet.add(isUnderlineEl(el));
-                            strikeSet.add(isStrikeEl(el));
-                        }
+                        var famEl = fontForElement(el);
+                        if (famEl)
+                            fonts.add(famEl);
+                        var szEl = fontSizeForElement(el);
+                        if (szEl)
+                            sizes.add(szEl);
+                        boldSet.add(isBoldEl(el));
+                        italicSet.add(isItalicEl(el));
+                        underlineSet.add(isUnderlineEl(el));
+                        strikeSet.add(isStrikeEl(el));
                     } else {
                         for (var i = 0; i < textNodes.length; i++) {
                             var tn = textNodes[i];
@@ -3571,9 +3905,32 @@ blockquote:not(.mail-quote) {
                         sizeOut = singleFromSet(sizes);
                     else if (sizes.size > 1)
                         sizeOut = '';
-                    var msg = 'fmt|' + encodeURIComponent(fontOut) + '|' + encodeURIComponent(sizeOut)
-                        + '|' + triState(boldSet) + '|' + triState(italicSet)
-                        + '|' + triState(underlineSet) + '|' + triState(strikeSet);
+                    return {
+                        font: fontOut,
+                        size: sizeOut,
+                        bold: triState(boldSet),
+                        italic: triState(italicSet),
+                        underline: triState(underlineSet),
+                        strike: triState(strikeSet)
+                    };
+                }
+
+                var lastFmt = null;
+                function notifyFormatState() {
+                    if (selectedImg) {
+                        var imgFmt = 'fmt|||0|0|0|0';
+                        if (lastFmt !== imgFmt) {
+                            lastFmt = imgFmt;
+                            postCompose(imgFmt);
+                        }
+                        return;
+                    }
+                    var measured = measureFormatFlags();
+                    if (!measured)
+                        return;
+                    var msg = 'fmt|' + encodeURIComponent(measured.font) + '|' + encodeURIComponent(measured.size)
+                        + '|' + measured.bold + '|' + measured.italic
+                        + '|' + measured.underline + '|' + measured.strike;
                     if (msg === lastFmt)
                         return;
                     lastFmt = msg;
@@ -3615,6 +3972,34 @@ blockquote:not(.mail-quote) {
                 }
 
                 window.mailCompose = {
+                    refreshFormat: function () {
+                        lastFmt = null;
+                        restoreSelection();
+                        notifyFormatState();
+                        scheduleFormatNotify();
+                    },
+                    queryFormatState: function () {
+                        var measured = measureFormatFlags();
+                        if (!measured)
+                            return 'none';
+                        return measured.bold + '|' + measured.italic + '|'
+                            + measured.underline + '|' + measured.strike;
+                    },
+                    applyStyleCommand: function (command) {
+                        var map = {
+                            Bold: 'bold',
+                            Italic: 'italic',
+                            Underline: 'underline',
+                            Strikethrough: 'strikeThrough'
+                        };
+                        var cmd = map[command] || command;
+                        editor.focus();
+                        restoreSelection();
+                        document.execCommand(cmd, false, null);
+                        saveSelection();
+                        lastFmt = null;
+                        notifyFormatState();
+                    },
                     bindLastImage: function (id) {
                         var img = id
                             ? editor.querySelector('img[data-mail-id="' + id + '"]')
@@ -3676,6 +4061,53 @@ blockquote:not(.mail-quote) {
                             img.remove();
                         clearSelection();
                         notifyImagePresence();
+                    },
+                    linkHref: function () {
+                        var sel = window.getSelection();
+                        var link = null;
+                        if (sel && sel.rangeCount)
+                            link = closest(sel.anchorNode, 'a');
+                        if (!link)
+                            link = contextLink;
+                        if (!link || !editor.contains(link))
+                            return '';
+                        if (closest(link, '.mail-quote, .mail-signature'))
+                            return '';
+                        return link.getAttribute('href') || '';
+                    },
+                    applyLink: function (href) {
+                        if (!href || inLockedRegion())
+                            return;
+                        var sel = window.getSelection();
+                        var link = null;
+                        if (sel && sel.rangeCount)
+                            link = closest(sel.anchorNode, 'a');
+                        if (!link)
+                            link = contextLink;
+                        if (link && editor.contains(link)
+                            && !closest(link, '.mail-quote, .mail-signature')) {
+                            link.setAttribute('href', href);
+                            contextLink = link;
+                            return;
+                        }
+                        if (!sel || !sel.rangeCount)
+                            return;
+                        if (sel.isCollapsed)
+                            window.mailCompose.selectSpellWord();
+                        sel = window.getSelection();
+                        if (!sel || !sel.rangeCount)
+                            return;
+                        if (!sel.isCollapsed) {
+                            document.execCommand('createLink', false, href);
+                            return;
+                        }
+                        var a = document.createElement('a');
+                        a.setAttribute('href', href);
+                        a.textContent = href;
+                        var range = sel.getRangeAt(0);
+                        range.insertNode(a);
+                        placeCaretAfter(a);
+                        contextLink = a;
                     },
                     removeLink: function () {
                         var link = contextLink;
@@ -3951,9 +4383,18 @@ blockquote:not(.mail-quote) {
                         scheduleFormatNotify();
                 });
 
-                document.addEventListener('selectionchange', scheduleFormatNotify);
-                editor.addEventListener('keyup', scheduleFormatNotify);
-                editor.addEventListener('mouseup', scheduleFormatNotify);
+                document.addEventListener('selectionchange', function () {
+                    saveSelection();
+                    scheduleFormatNotify();
+                });
+                editor.addEventListener('keyup', function () {
+                    saveSelection();
+                    scheduleFormatNotify();
+                });
+                editor.addEventListener('mouseup', function () {
+                    saveSelection();
+                    scheduleFormatNotify();
+                });
 
                 document.addEventListener('pointerdown', function (e) {
                     if (!e.target || !e.target.closest)
@@ -4014,6 +4455,7 @@ blockquote:not(.mail-quote) {
                 /* Lists need the space already in the DOM; links are handled on keydown. */
                 editor.addEventListener('input', function (e) {
                     postCompose('dirty');
+                    scheduleFormatNotify();
                     if (e.inputType === 'insertFromPaste') {
                         tryAutoList();
                         tryAutoLink(true);
@@ -4117,6 +4559,87 @@ private GenericArray<File> compose_usable_drop_files (Value value) {
 }
 
 namespace Mail.ComposeExtras {
+    public static async void prompt_edit_link (Gtk.Widget parent, ComposeHtmlView view) {
+        var current = yield view.query_link_href ();
+        var editing = current.length > 0;
+        var dialog = new Adw.AlertDialog (
+            editing ? _("Edit Link") : _("Add Link"),
+            _("Web address")
+        );
+        var entry = new Gtk.Entry () {
+            text = current,
+            activates_default = true,
+            hexpand = true,
+            width_chars = 36,
+        };
+        entry.add_css_class ("compose-link-entry");
+
+        var schemes = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            halign = Gtk.Align.START,
+        };
+        schemes.append (link_scheme_chip ("https://", entry));
+        schemes.append (link_scheme_chip ("mailto:", entry));
+
+        var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 8) {
+            hexpand = true,
+        };
+        box.append (schemes);
+        box.append (entry);
+        dialog.extra_child = box;
+        dialog.add_response ("cancel", _("Cancel"));
+        dialog.add_response ("apply", editing ? _("Save") : _("Add"));
+        dialog.set_response_appearance ("apply", Adw.ResponseAppearance.SUGGESTED);
+        dialog.default_response = "apply";
+        dialog.close_response = "cancel";
+
+        Idle.add (() => {
+            entry.grab_focus ();
+            entry.set_position (-1);
+            return Source.REMOVE;
+        });
+
+        var response = yield dialog.choose (parent, null);
+        if (response != "apply")
+            return;
+        var href = ComposeHtmlView.normalize_link_href (entry.text);
+        if (href.length == 0)
+            return;
+        view.apply_link (href);
+    }
+
+    private static Gtk.Widget link_scheme_chip (string scheme, Gtk.Entry entry) {
+        var button = new Gtk.Button.with_label (scheme) {
+            focus_on_click = false,
+            valign = Gtk.Align.CENTER,
+        };
+        button.add_css_class ("flat");
+        button.add_css_class ("pill");
+        button.add_css_class ("compose-link-scheme");
+        button.clicked.connect (() => {
+            apply_link_scheme_prefix (entry, scheme);
+            entry.grab_focus ();
+            entry.set_position (-1);
+        });
+        return button;
+    }
+
+    private static void apply_link_scheme_prefix (Gtk.Entry entry, string scheme) {
+        var text = entry.text.strip ();
+        if (text.has_prefix ("https://"))
+            text = text.substring ("https://".length);
+        else if (text.has_prefix ("http://"))
+            text = text.substring ("http://".length);
+        else if (text.has_prefix ("mailto:"))
+            text = text.substring ("mailto:".length);
+        else if (Regex.match_simple ("^[a-zA-Z][a-zA-Z0-9+.-]*:", text)) {
+            var colon = text.index_of_char (':');
+            text = text.substring (colon + 1);
+            if (text.has_prefix ("//"))
+                text = text.substring (2);
+        }
+        entry.text = scheme + text;
+    }
+
     public static async void prompt_insert_image (Gtk.Widget parent, ComposeHtmlView view) {
         var dialog = new Gtk.FileDialog () {
             title = _("Insert Image"),

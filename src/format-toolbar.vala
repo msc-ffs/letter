@@ -5,10 +5,17 @@ public class Mail.FormatToolbar : Gtk.Box {
     private GenericArray<string> font_families = new GenericArray<string> ();
     private Gtk.DropDown font_drop;
     private Gtk.DropDown size_drop;
-    private Gtk.ToggleButton bold_toggle;
-    private Gtk.ToggleButton italic_toggle;
-    private Gtk.ToggleButton underline_toggle;
-    private Gtk.ToggleButton strike_toggle;
+    private Gtk.ToggleButton? bold_toggle;
+    private Gtk.ToggleButton? italic_toggle;
+    private Gtk.ToggleButton? underline_toggle;
+    private Gtk.ToggleButton? strike_toggle;
+    private Gtk.Box format_style_box;
+    private Gtk.Popover format_style_popover;
+    private bool format_style_open;
+    private string format_bold = "0";
+    private string format_italic = "0";
+    private string format_underline = "0";
+    private string format_strike = "0";
     private bool toolbar_live = true;
     private uint toolbar_live_idle;
 
@@ -63,16 +70,12 @@ public class Mail.FormatToolbar : Gtk.Box {
             vexpand = false,
             valign = Gtk.Align.CENTER,
         };
-        this.bold_toggle = format_toggle_button ("format-text-bold-symbolic", _("Bold"), "Bold");
-        this.italic_toggle = format_toggle_button ("format-text-italic-symbolic", _("Italic"), "Italic");
-        this.underline_toggle = format_toggle_button ("format-text-underline-symbolic", _("Underline"), "Underline");
-        this.strike_toggle = format_toggle_button ("format-text-strikethrough-symbolic", _("Strikethrough"), "Strikethrough");
-        formats.append (this.bold_toggle);
-        formats.append (this.italic_toggle);
-        formats.append (this.underline_toggle);
-        formats.append (this.strike_toggle);
+        formats.append (format_style_menu_button ());
         formats.append (color_menu_button ());
         formats.append (emoji_button ());
+        formats.append (icon_button ("insert-link-symbolic", _("Insert Link"), () => {
+            ComposeExtras.prompt_edit_link.begin (this, this.view);
+        }));
         formats.append (icon_button ("image-x-generic-symbolic", _("Insert Image"), () => insert_image ()));
         formats.append (this.view.create_image_size_drop ());
         append (formats);
@@ -110,20 +113,124 @@ public class Mail.FormatToolbar : Gtk.Box {
             : Gtk.INVALID_LIST_POSITION;
         if (this.size_drop.selected != size_sel)
             this.size_drop.selected = size_sel;
-        ComposeHtmlView.apply_format_toggle (this.bold_toggle, bold);
-        ComposeHtmlView.apply_format_toggle (this.italic_toggle, italic);
-        ComposeHtmlView.apply_format_toggle (this.underline_toggle, underline);
-        ComposeHtmlView.apply_format_toggle (this.strike_toggle, strike);
+        this.format_bold = bold;
+        this.format_italic = italic;
+        this.format_underline = underline;
+        this.format_strike = strike;
+        sync_format_style_toggles ();
     }
 
-    private Gtk.ToggleButton format_toggle_button (string icon, string tooltip, string command) {
+    private void sync_format_style_toggles () {
+        if (!this.format_style_open)
+            return;
+        suppress_toolbar_commands ();
+        if (this.bold_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.bold_toggle, this.format_bold);
+        if (this.italic_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.italic_toggle, this.format_italic);
+        if (this.underline_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.underline_toggle, this.format_underline);
+        if (this.strike_toggle != null)
+            ComposeHtmlView.apply_format_toggle (this.strike_toggle, this.format_strike);
+    }
+
+    private Gtk.Widget format_style_menu_button () {
+        this.format_style_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4) {
+            margin_start = 6,
+            margin_end = 6,
+            margin_top = 6,
+            margin_bottom = 6,
+        };
+        this.format_style_box.add_css_class ("compose-format-actions");
+
+        this.format_style_popover = new Gtk.Popover () {
+            autohide = true,
+            has_arrow = true,
+            position = Gtk.PositionType.BOTTOM,
+            child = this.format_style_box,
+        };
+        this.format_style_popover.add_css_class ("compose-format-popover");
+        this.format_style_popover.notify["visible"].connect (() => {
+            if (this.format_style_popover.visible) {
+                this.format_style_open = true;
+                open_format_style_popover.begin ();
+            } else {
+                this.format_style_open = false;
+            }
+        });
+
+        var button = new Gtk.MenuButton () {
+            valign = Gtk.Align.CENTER,
+            tooltip_text = _("Text Style"),
+            icon_name = "format-text-rich-symbolic",
+            popover = this.format_style_popover,
+            always_show_arrow = false,
+            direction = Gtk.ArrowType.DOWN,
+            focus_on_click = false,
+        };
+        button.add_css_class ("flat");
+        button.add_css_class ("compose-format-menu");
+        rebuild_format_style_toggles ();
+        return button;
+    }
+
+    private async void open_format_style_popover () {
+        try {
+            string bold;
+            string italic;
+            string underline;
+            string strike;
+            if (yield this.view.pull_format_state (out bold, out italic, out underline, out strike)) {
+                this.format_bold = bold;
+                this.format_italic = italic;
+                this.format_underline = underline;
+                this.format_strike = strike;
+            }
+        } catch (Error e) {
+            debug ("Could not pull compose format state: %s", e.message);
+        }
+        if (this.format_style_open)
+            rebuild_format_style_toggles ();
+    }
+
+    private void rebuild_format_style_toggles () {
+        Gtk.Widget? child = this.format_style_box.get_first_child ();
+        while (child != null) {
+            var next = child.get_next_sibling ();
+            this.format_style_box.remove (child);
+            child = next;
+        }
+
+        this.bold_toggle = make_format_style_toggle (
+            "format-text-bold-symbolic", _("Bold"), "Bold", this.format_bold);
+        this.italic_toggle = make_format_style_toggle (
+            "format-text-italic-symbolic", _("Italic"), "Italic", this.format_italic);
+        this.underline_toggle = make_format_style_toggle (
+            "format-text-underline-symbolic", _("Underline"), "Underline", this.format_underline);
+        this.strike_toggle = make_format_style_toggle (
+            "format-text-strikethrough-symbolic", _("Strikethrough"), "Strikethrough", this.format_strike);
+        this.format_style_box.append (this.bold_toggle);
+        this.format_style_box.append (this.italic_toggle);
+        this.format_style_box.append (this.underline_toggle);
+        this.format_style_box.append (this.strike_toggle);
+    }
+
+    private Gtk.ToggleButton make_format_style_toggle (
+        string icon,
+        string tooltip,
+        string command,
+        string state
+    ) {
         var button = new Gtk.ToggleButton () {
             icon_name = icon,
             valign = Gtk.Align.CENTER,
             tooltip_text = tooltip,
             focus_on_click = false,
+            active = state == "1",
         };
         button.add_css_class ("flat");
+        if (state == "m")
+            button.add_css_class ("compose-format-mixed");
         button.toggled.connect (() => {
             if (!this.toolbar_live)
                 return;

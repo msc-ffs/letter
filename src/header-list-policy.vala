@@ -128,7 +128,8 @@ public class Mail.HeaderListPolicy {
         var any = false;
         for (uint i = 0; i < messages.length; i++) {
             var uid = messages[i].uid;
-            if (uid != null && uid.length > 0 && retired.contains (uid)) {
+            if (uid != null && uid.length > 0 && retired.contains (uid)
+                && !messages[i].local_only) {
                 any = true;
                 break;
             }
@@ -139,7 +140,10 @@ public class Mail.HeaderListPolicy {
         var kept = new GenericArray<Message> ();
         for (uint i = 0; i < messages.length; i++) {
             var uid = messages[i].uid;
-            if (uid != null && uid.length > 0 && retired.contains (uid))
+            /* Keep optimistic move rows until the new Graph id is in the list —
+             * retiring the old id must not erase the only destination header. */
+            if (uid != null && uid.length > 0 && retired.contains (uid)
+                && !messages[i].local_only)
                 continue;
             kept.add (messages[i]);
         }

@@ -381,19 +381,33 @@ msgstr ""
 "organização e nos contatos do catálogo de endereços."
 
 #: data/io.github.stalvatero.Letter.gschema.xml.in:107
-#: src/preferences-dialog.vala:203
-msgid "Recover broken remote images"
-msgstr "Recuperar imagens remotas com falha"
+#: src/preferences-dialog.vala:196
+msgid "Retry failed remote images"
+msgstr "Tentar novamente imagens remotas com falha"
 
 #: data/io.github.stalvatero.Letter.gschema.xml.in:108
 msgid ""
-"Download missing issuer certificates to recover HTTPS images from trusted "
-"senders. This contacts additional servers and may omit connection-specific "
-"revocation checks."
+"If an image from a trusted sender fails to load because the site’s HTTPS "
+"certificate chain is incomplete, download it again with a recovery path that "
+"can fetch missing intermediate certificates. Off by default: uses extra "
+"network requests and may skip some revocation checks."
 msgstr ""
-"Baixar os certificados ausentes das autoridades emissoras para recuperar "
-"imagens HTTPS de remetentes confiáveis. Isso contata servidores adicionais e "
-"pode omitir verificações de revogação específicas da conexão."
+"Se uma imagem de um remetente confiável falhar ao carregar porque a cadeia "
+"de certificados HTTPS do site está incompleta, baixá-la novamente com um "
+"caminho de recuperação que pode obter certificados intermediários ausentes. "
+"Desativado por padrão: usa solicitações de rede extras e pode omitir "
+"algumas verificações de revogação."
+
+#: src/preferences-dialog.vala:197
+msgid ""
+"If an image from a trusted sender fails to load because the site’s HTTPS "
+"certificate chain is incomplete, download it again with a stricter recovery "
+"path. Off by default; uses extra network requests."
+msgstr ""
+"Se uma imagem de um remetente confiável falhar ao carregar porque a cadeia "
+"de certificados HTTPS do site está incompleta, baixá-la novamente com um "
+"caminho de recuperação mais rigoroso. Desativado por padrão; usa "
+"solicitações de rede extras."
 
 #: data/io.github.stalvatero.Letter.gschema.xml.in:112
 #: data/io.github.stalvatero.Mail.gschema.xml.in:89
@@ -2438,14 +2452,6 @@ msgstr "Após 5 segundos"
 #: src/preferences-dialog.vala:182
 msgid "Never"
 msgstr "Nunca"
-
-#: src/preferences-dialog.vala:204
-msgid ""
-"Contact certificate providers for images from trusted senders. Some "
-"revocation checks are unavailable."
-msgstr ""
-"Contatar os provedores de certificados para carregar imagens de remetentes "
-"confiáveis. Algumas verificações de revogação não estão disponíveis."
 
 #: src/preferences-dialog.vala:214
 msgid "Conversations"

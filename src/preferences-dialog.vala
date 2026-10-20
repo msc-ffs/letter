@@ -7,7 +7,6 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
     private Adw.SwitchRow aggregate_sound_row;
     private Adw.ComboRow interval_row;
     private Adw.ComboRow cache_days_row;
-    private GenericArray<Gtk.ToggleButton> section_chips = new GenericArray<Gtk.ToggleButton> ();
     private Settings settings;
     private SignatureStore signatures;
     private Adw.PreferencesGroup accounts_group;
@@ -34,11 +33,6 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
         this.settings = new Settings (Config.APP_ID);
         this.signatures = new SignatureStore (this.settings);
         this.signatures.migrate_if_needed (store);
-
-        var page = new Adw.PreferencesPage () {
-            title = _("General"),
-            icon_name = "mail-unread-symbolic",
-        };
 
         var integration = new Adw.PreferencesGroup () {
             title = _("GNOME integration"),
@@ -200,9 +194,9 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
         reading.add (read_row);
 
         var recovery_row = new Adw.SwitchRow () {
-            title = _("Recover broken remote images"),
-            subtitle = _("Contact certificate providers for images from trusted senders. Some revocation checks are unavailable."),
-            subtitle_lines = 2,
+            title = _("Retry failed remote images"),
+            subtitle = _("If an image from a trusted sender fails to load because the site’s HTTPS certificate chain is incomplete, download it again with a stricter recovery path. Off by default; uses extra network requests."),
+            subtitle_lines = 3,
             active = this.settings.get_boolean ("recover-remote-images"),
         };
         recovery_row.notify["active"].connect (() => {
@@ -364,37 +358,48 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
         });
         deps_group.add (deps_row);
 
-        var chips = new Adw.WrapBox () {
-            hexpand = true,
-            child_spacing = 8,
-            line_spacing = 8,
-            justify = Adw.JustifyMode.NONE,
-            wrap_policy = Adw.WrapPolicy.NATURAL,
+        /* Four top-level pages — Adw.PreferencesDialog shows a ViewSwitcher
+         * in the header (same pattern as GNOME Terminal / Settings). */
+        var accounts_page = new Adw.PreferencesPage () {
+            name = "accounts",
+            title = _("Accounts"),
+            icon_name = "avatar-default-symbolic",
         };
-        add_section_chip (chips, _("GNOME integration"), integration);
-        add_section_chip (chips, _("Appearance"), appearance);
-        add_section_chip (chips, _("Reading"), reading);
-        add_section_chip (chips, _("Notifications"), notifications);
-        add_section_chip (chips, _("Synchronization"), sync);
-        add_section_chip (chips, _("Local library"), this.cache_group);
-        add_section_chip (chips, _("Accounts"), accounts);
-        add_section_chip (chips, _("Dependencies"), deps_group);
+        accounts_page.add (accounts);
+        accounts_page.add (this.cache_group);
 
-        var nav = new Adw.PreferencesGroup ();
-        nav.add_css_class ("filter-nav");
-        nav.add (chips);
-        page.add (nav);
-        page.add (integration);
-        page.add (appearance);
-        page.add (reading);
-        page.add (notifications);
-        page.add (sync);
-        page.add (this.cache_group);
-        page.add (accounts);
-        page.add (deps_group);
+        var appearance_page = new Adw.PreferencesPage () {
+            name = "appearance",
+            title = _("Appearance"),
+            icon_name = "preferences-desktop-appearance-symbolic",
+        };
+        appearance_page.add (appearance);
+        appearance_page.add (reading);
 
-        add (page);
-        widen_page_content (page, PAGE_CONTENT_WIDTH);
+        var behavior_page = new Adw.PreferencesPage () {
+            name = "behavior",
+            title = _("Behavior"),
+            icon_name = "preferences-system-symbolic",
+        };
+        behavior_page.add (sync);
+        behavior_page.add (notifications);
+
+        var integrations_page = new Adw.PreferencesPage () {
+            name = "integrations",
+            title = _("Integrations"),
+            icon_name = "application-x-addon-symbolic",
+        };
+        integrations_page.add (integration);
+        integrations_page.add (deps_group);
+
+        add (accounts_page);
+        add (appearance_page);
+        add (behavior_page);
+        add (integrations_page);
+        widen_page_content (accounts_page, PAGE_CONTENT_WIDTH);
+        widen_page_content (appearance_page, PAGE_CONTENT_WIDTH);
+        widen_page_content (behavior_page, PAGE_CONTENT_WIDTH);
+        widen_page_content (integrations_page, PAGE_CONTENT_WIDTH);
     }
 
     private static void widen_page_content (Adw.PreferencesPage page, int size) {
@@ -408,57 +413,6 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             }
             widget = widget.get_first_child ();
         }
-    }
-
-    private void add_section_chip (Adw.WrapBox chips, string label, Adw.PreferencesGroup group) {
-        var chip = new Gtk.ToggleButton.with_label (label) {
-            valign = Gtk.Align.CENTER,
-        };
-        chip.add_css_class ("filter-chip");
-        chip.add_css_class ("flat");
-        if (this.section_chips.length > 0)
-            chip.group = this.section_chips[0];
-        chip.toggled.connect (() => {
-            if (chip.active)
-                scroll_to_group (group);
-        });
-        this.section_chips.add (chip);
-        chips.append (chip);
-    }
-
-    private void scroll_to_group (Adw.PreferencesGroup group) {
-        Idle.add (() => {
-            var scrolled = find_scrolled (group);
-            if (scrolled == null)
-                return Source.REMOVE;
-
-            Graphene.Rect bounds;
-            if (!group.compute_bounds (scrolled, out bounds))
-                return Source.REMOVE;
-
-            var adj = scrolled.get_vadjustment ();
-            var target = adj.value + bounds.origin.y;
-            var max_scroll = adj.upper - adj.page_size;
-            if (max_scroll < adj.lower)
-                max_scroll = adj.lower;
-            if (target < adj.lower)
-                target = adj.lower;
-            if (target > max_scroll)
-                target = max_scroll;
-            adj.value = target;
-            return Source.REMOVE;
-        });
-    }
-
-    private static Gtk.ScrolledWindow? find_scrolled (Gtk.Widget widget) {
-        Gtk.Widget? current = widget;
-        while (current != null) {
-            var scrolled = current as Gtk.ScrolledWindow;
-            if (scrolled != null)
-                return scrolled;
-            current = current.get_parent ();
-        }
-        return null;
     }
 
     private static uint interval_index (int seconds) {

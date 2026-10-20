@@ -104,8 +104,8 @@
     </key>
     <key name="recover-remote-images" type="b">
       <default>false</default>
-      <summary>Recover broken remote images</summary>
-      <description>Download missing issuer certificates to recover HTTPS images from trusted senders. This contacts additional servers and may omit connection-specific revocation checks.</description>
+      <summary>Retry failed remote images</summary>
+      <description>If an image from a trusted sender fails to load because the site’s HTTPS certificate chain is incomplete, download it again with a recovery path that can fetch missing intermediate certificates. Off by default: uses extra network requests and may skip some revocation checks.</description>
     </key>
     <key name="sync-interval" type="i">
       <default>300</default>

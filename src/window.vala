@@ -233,6 +233,9 @@ public class Mail.Window : Adw.ApplicationWindow {
     private string? pending_select_uid;
     private bool tearing_down;
     private HashTable<string, uint8> hidden_uids;
+    /* Optimistic move headers keyed by message_cache_key — survive RAM/disk
+     * eviction so opening the destination before F5 still lists them. */
+    private HashTable<string, GenericArray<Message>> optimistic_dest_headers;
     private PendingTransferUndo? pending_transfer_undo;
     private HashTable<string, uint8> collapsed_folders;
     private Gtk.SizeGroup account_header_sizes;
@@ -394,6 +397,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.header_cache_save_sources = new HashTable<string, uint> (str_hash, str_equal);
         this.folder_tree_cache = new HashTable<string, GenericArray<Folder>> (str_hash, str_equal);
         this.hidden_uids = new HashTable<string, uint8> (str_hash, str_equal);
+        this.optimistic_dest_headers = new HashTable<string, GenericArray<Message>> (str_hash, str_equal);
         this.collapsed_folders = new HashTable<string, uint8> (str_hash, str_equal);
         this.account_header_sizes = new Gtk.SizeGroup (Gtk.SizeGroupMode.VERTICAL);
         this.account_row_sizes = new Gtk.SizeGroup (Gtk.SizeGroupMode.VERTICAL);
@@ -1014,6 +1018,11 @@ public class Mail.Window : Adw.ApplicationWindow {
         /* Always drop locally-hidden (archived/moved pending flush) so Camel
          * summaries and disk header caches cannot resurrect them. */
         var visible = visible_messages (account, folder, messages);
+        /* Keep optimistic local headers when a disk/Camel list replaces RAM
+         * before the move has been flushed (F5 / sync). */
+        if (previous != null)
+            visible = merge_pending_local_headers (previous, visible);
+        visible = ensure_optimistic_dest_headers (account, folder, visible);
         /* Scale-based shrink guard. accept_empty is a finished server walk
          * that returned no UIDs (Empty Trash / emptied elsewhere) — must
          * replace the list, not merge the old index back. accept_server_shrink
@@ -1091,6 +1100,7 @@ public class Mail.Window : Adw.ApplicationWindow {
             display_messages (account, folder, visible);
         else
             queue_conversation_refresh ();
+        maybe_harvest_sent_recipients (account, folder, visible);
         sync_bookmarks_folder ();
         sync_important_markers ();
         if (known.length > 0)
@@ -1155,6 +1165,29 @@ public class Mail.Window : Adw.ApplicationWindow {
             result.add (incoming[i]);
         }
         return result;
+    }
+
+    /* Re-attach optimistic move/draft headers missing from a disk/Camel list. */
+    private static GenericArray<Message> merge_pending_local_headers (
+        GenericArray<Message> previous,
+        GenericArray<Message> incoming
+    ) {
+        var have = new HashTable<string, uint8> (str_hash, str_equal);
+        for (uint i = 0; i < incoming.length; i++) {
+            if (incoming[i].uid != null && incoming[i].uid.length > 0)
+                have.set (incoming[i].uid, 1);
+        }
+
+        for (uint i = 0; i < previous.length; i++) {
+            var message = previous[i];
+            if (!message.local_only && !message.is_placeholder)
+                continue;
+            if (message.uid == null || message.uid.length == 0 || have.contains (message.uid))
+                continue;
+            have.set (message.uid, 1);
+            incoming.add (message);
+        }
+        return incoming;
     }
 
     private bool folder_skips_body_prefetch (Folder folder) {
@@ -4151,7 +4184,34 @@ public class Mail.Window : Adw.ApplicationWindow {
             cancel_mark_seen ();
         }
 
+        /* Paint optimistic moves synchronously so the destination is never
+         * empty while the async disk/Camel path catches up. */
+        paint_optimistic_destination (folder_row.folder);
         load_messages.begin (folder_row.folder);
+    }
+
+    private void paint_optimistic_destination (Folder folder) {
+        var account = this.selected_account;
+        if (account == null)
+            return;
+        var key = message_cache_key (account, folder);
+        var pending = this.optimistic_dest_headers.get (key);
+        if (pending == null || pending.length == 0)
+            return;
+
+        var cache = ensure_optimistic_dest_headers (
+            account, folder, this.message_cache.get (key)
+        );
+        if (cache == null || cache.length == 0)
+            return;
+        Utils.sync_log (
+            "optimistic dest paint “%s” (%u headers, %u pending)".printf (
+                folder.name,
+                cache.length,
+                pending.length
+            )
+        );
+        display_messages (account, folder, cache);
     }
 
     private async void load_messages (Folder folder) {
@@ -4194,14 +4254,14 @@ public class Mail.Window : Adw.ApplicationWindow {
             if (from_disk != null && from_disk.length > 0) {
                 note_header_high_water (account, folder, from_disk.length);
                 store_folder_messages (account, folder, from_disk, null, false);
-                cached = from_disk;
+                cached = this.message_cache.get (cache_key) ?? from_disk;
                 Utils.sync_log ("open folder disk prime “%s” → %u headers".printf (
                     folder.name,
-                    from_disk.length
+                    cached.length
                 ));
             } else if (from_disk != null) {
                 store_folder_messages (account, folder, from_disk, null, false, true);
-                cached = from_disk;
+                cached = this.message_cache.get (cache_key) ?? from_disk;
                 Utils.sync_log ("open folder disk prime “%s” → 0 headers".printf (folder.name));
             }
         } else {
@@ -4220,13 +4280,17 @@ public class Mail.Window : Adw.ApplicationWindow {
                         )
                     );
                     store_folder_messages (account, folder, from_disk, null, false);
-                    cached = from_disk;
+                    /* Use the merged RAM list — from_disk alone drops local_only. */
+                    cached = this.message_cache.get (cache_key) ?? from_disk;
                 }
             }
         }
+        /* Pending optimistic moves outlive RAM stubs / disk repair. */
+        cached = ensure_optimistic_dest_headers (account, folder, cached);
         if (cached != null && cached.length > 0) {
             touch_message_cache_key (cache_key);
             display_messages (account, folder, cached);
+            maybe_harvest_sent_recipients (account, folder, cached);
             /* High-water is sync metadata only — never inflate folder.total /
              * the heading above the rows actually in the list (that made large
              * folders look full while scrolling into empty ListView space). */
@@ -4234,9 +4298,10 @@ public class Mail.Window : Adw.ApplicationWindow {
             /* Known empty. A stale tree count must not cover it. */
             touch_message_cache_key (cache_key);
             display_messages (account, folder, cached);
-        } else if (folder_waiting_for_cache (folder)) {
+        } else if (folder_waiting_for_cache (folder)
+            && !this.optimistic_dest_headers.contains (cache_key)) {
             show_folder_cache_align_loading (folder);
-        } else {
+        } else if (!this.optimistic_dest_headers.contains (cache_key)) {
             show_conversation_loading (
                 _("Loading Messages"),
                 _("Reading the local list for “%s”…").printf (folder.name)
@@ -4283,27 +4348,36 @@ public class Mail.Window : Adw.ApplicationWindow {
             );
             if (!is_current_folder (folder))
                 return;
-            cached = this.message_cache.get (cache_key);
+            cached = ensure_optimistic_dest_headers (
+                account, folder, this.message_cache.get (cache_key)
+            );
             if (cached != null && cached.length > 0)
                 display_messages (account, folder, cached);
             else if (hint_total > 0 || hint_unread > 0) {
                 folder.total = int.max (folder.total, hint_total);
                 folder.unread = int.max (folder.unread, hint_unread);
                 refresh_folder_badge (folder);
-                show_folder_cache_align_loading (folder);
+                if (!this.optimistic_dest_headers.contains (cache_key))
+                    show_folder_cache_align_loading (folder);
             }
         }
-        cached = this.message_cache.get (cache_key);
+        cached = ensure_optimistic_dest_headers (
+            account, folder, this.message_cache.get (cache_key)
+        );
         /* A finished align already stored an empty list and cleared the badge.
          * The pre-click hint must not put the aligning spinner back on top. */
         if (cached != null && cached.length == 0
             && folder.total <= 0 && folder.unread <= 0) {
             if (is_current_folder (folder) && this.search_text.length == 0)
                 display_messages (account, folder, cached);
+        } else if (cached != null && cached.length > 0) {
+            if (is_current_folder (folder) && this.search_text.length == 0)
+                display_messages (account, folder, cached);
         } else if ((cached == null || cached.length == 0)
             && (folder.total > 0 || folder.unread > 0 || hint_total > 0 || hint_unread > 0)
             && !folder_is_incoming_watch (folder)
-            && !folder.is_gmail_namespace) {
+            && !folder.is_gmail_namespace
+            && !this.optimistic_dest_headers.contains (cache_key)) {
             if (folder.total <= 0 && hint_total > 0)
                 folder.total = hint_total;
             if (folder.unread <= 0 && hint_unread > 0)
@@ -5040,7 +5114,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         var path = MailSession.header_list_cache_file (account_uid, folder_full_name);
         uint write_n = 0;
         for (uint i = 0; i < messages.length; i++) {
-            if (messages[i].uid != null && messages[i].uid.length > 0 && !messages[i].local_only)
+            if (messages[i].uid != null && messages[i].uid.length > 0)
                 write_n++;
         }
         if (FileUtils.test (path, FileTest.IS_REGULAR)) {
@@ -5086,8 +5160,6 @@ public class Mail.Window : Adw.ApplicationWindow {
             var message = messages[i];
             if (message.uid == null || message.uid.length == 0)
                 continue;
-            if (message.local_only)
-                continue;
 
             int flags = 0;
             if (message.seen)
@@ -5100,6 +5172,9 @@ public class Mail.Window : Adw.ApplicationWindow {
                 flags |= 1 << 3;
             if (message.outgoing)
                 flags |= 1 << 4;
+            /* Optimistic moves / local drafts must survive RAM eviction. */
+            if (message.local_only)
+                flags |= 1 << 5;
 
             builder.append (message.uid);
             builder.append_c ('\t');
@@ -5436,11 +5511,23 @@ public class Mail.Window : Adw.ApplicationWindow {
         return visible;
     }
 
+    private void maybe_harvest_sent_recipients (
+        Account account,
+        Folder folder,
+        GenericArray<Message> messages
+    ) {
+        if (folder.kind != FolderKind.SENT || messages.length == 0)
+            return;
+        var app = get_application () as Application;
+        app?.contacts.harvest_sent_messages (account, messages);
+    }
+
     private void display_messages (Account account, Folder folder, GenericArray<Message> messages) {
         if (this.search_text.length > 0)
             return;
 
-        var stored = visible_messages (account, folder, messages);
+        var with_pending = ensure_optimistic_dest_headers (account, folder, messages) ?? messages;
+        var stored = visible_messages (account, folder, with_pending);
         Conversation.prune_duplicate_sends (stored);
         sort_messages_by_date (stored);
         this.message_cache.set (message_cache_key (account, folder), stored);
@@ -5462,12 +5549,18 @@ public class Mail.Window : Adw.ApplicationWindow {
                     this.conversation_grouping_dirty = true;
                     return;
                 }
-                if (showing_this_folder (folder) && !this.conversation_apply_quiet) {
+                var has_optimistic = this.optimistic_dest_headers.contains (
+                    message_cache_key (account, folder)
+                );
+                /* Optimistic moves must paint now — quiet regroup can run after
+                 * a Camel tip that briefly lacked the local_only header. */
+                if (showing_this_folder (folder) && !this.conversation_apply_quiet
+                    && !has_optimistic) {
                     schedule_quiet_regroup ();
                     return;
                 }
                 /* Click lands on rows at once. Threading then updates the model. */
-                if (!showing_this_folder (folder))
+                if (!showing_this_folder (folder) || has_optimistic)
                     show_known_folder_list (account, folder, stored);
                 var gen = ++this.display_messages_generation;
                 this.conversation_regroup_not_before =
@@ -5597,7 +5690,9 @@ public class Mail.Window : Adw.ApplicationWindow {
             return;
         }
 
-        if (is_showing_list () && same_conversation_ids (listed)) {
+        /* Only skip a full model rebuild when this folder's rows are already
+         * on screen — leftover Inbox ids must not block painting Sett. */
+        if (showing_this_folder (folder) && same_conversation_ids (listed)) {
             apply_conversation_seen (listed);
             if (this.unread_only) {
                 var still = listed_conversations (listed);
@@ -8152,7 +8247,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         if (message == null || folder == null)
             return;
 
-        var destination = yield pick_folder (this, folders_from_tree (), folder);
+        var destination = yield pick_folder (this, folders_from_tree (), folder, 1, this.selected_account);
         if (destination == null)
             return;
 
@@ -8241,7 +8336,9 @@ public class Mail.Window : Adw.ApplicationWindow {
         Folder? current = folder_for_message (messages[0]);
         if (current == null)
             current = this.selected_folder;
-        var destination = yield pick_folder (this, folders_from_tree (), current, messages.length);
+        var destination = yield pick_folder (
+            this, folders_from_tree (), current, messages.length, this.selected_account
+        );
         if (destination == null)
             return;
 
@@ -8510,18 +8607,19 @@ public class Mail.Window : Adw.ApplicationWindow {
             refresh_folder_badge (groups[i].folder);
         refresh_folder_badge (destination);
 
-        /* Persist both sides of the optimistic move so a live folder-changed
-         * / eviction cannot rebuild from a stale disk index missing the move. */
+        /* Persist both sides immediately (never shrink) so opening the
+         * destination before F5 still shows the optimistic headers. */
         for (uint i = 0; i < groups.length; i++) {
-            var src_cache = this.message_cache.get (message_cache_key (account, groups[i].folder));
-            if (src_cache != null)
-                queue_header_list_cache_save (account, groups[i].folder, src_cache);
+            var src_key = message_cache_key (account, groups[i].folder);
+            this.grouped_list_cache.remove (src_key);
+            persist_optimistic_move_headers (account, groups[i].folder);
         }
-        var dest_cache = this.message_cache.get (message_cache_key (account, destination));
-        if (dest_cache != null) {
+        var dest_key = message_cache_key (account, destination);
+        this.grouped_list_cache.remove (dest_key);
+        var dest_cache = this.message_cache.get (dest_key);
+        if (dest_cache != null)
             note_header_high_water (account, destination, dest_cache.length);
-            queue_header_list_cache_save (account, destination, dest_cache);
-        }
+        persist_optimistic_move_headers (account, destination);
 
         /* Enqueue Camel moves into the deferred registry. Undo toast is local
          * only — server push waits for the sync timer or F5. */
@@ -8659,6 +8757,8 @@ public class Mail.Window : Adw.ApplicationWindow {
         message.local_only = item.local_only;
         if (item.folder_full_name != null)
             message.folder_full_name = item.folder_full_name;
+        forget_optimistic_dest_header (account, destination, current_uid);
+        forget_optimistic_dest_header (account, destination, uid);
         remove_from_folder_cache (account, destination, current_uid);
         add_to_folder_cache (account, from, message);
         from.total++;
@@ -8668,6 +8768,137 @@ public class Mail.Window : Adw.ApplicationWindow {
             destination.total--;
         if (unseen && destination.unread > 0)
             destination.unread--;
+
+        persist_optimistic_move_headers (account, from);
+        persist_optimistic_move_headers (account, destination);
+    }
+
+    private void remember_optimistic_dest_header (Account account, Folder destination, Message message) {
+        if (message.uid == null || message.uid.length == 0)
+            return;
+        var key = message_cache_key (account, destination);
+        var list = this.optimistic_dest_headers.get (key);
+        if (list == null) {
+            list = new GenericArray<Message> ();
+            this.optimistic_dest_headers.set (key, list);
+        }
+        for (uint i = 0; i < list.length; i++) {
+            if (list[i].uid == message.uid) {
+                list[i] = message;
+                Utils.sync_log ("optimistic dest remember “%s” uid %s (update)".printf (
+                    destination.full_name,
+                    message.uid
+                ));
+                return;
+            }
+        }
+        list.add (message);
+        Utils.sync_log ("optimistic dest remember “%s” uid %s (now %u)".printf (
+            destination.full_name,
+            message.uid,
+            list.length
+        ));
+    }
+
+    private void forget_optimistic_dest_header (Account account, Folder destination, string? uid) {
+        if (uid == null || uid.length == 0)
+            return;
+        var key = message_cache_key (account, destination);
+        var list = this.optimistic_dest_headers.get (key);
+        if (list == null)
+            return;
+        for (uint i = 0; i < list.length; i++) {
+            if (list[i].uid != uid)
+                continue;
+            list.remove_index (i);
+            break;
+        }
+        if (list.length == 0)
+            this.optimistic_dest_headers.remove (key);
+    }
+
+    /* Re-attach optimistic move headers so destination open never depends on
+     * whether RAM/disk still holds the local_only row. */
+    private GenericArray<Message>? ensure_optimistic_dest_headers (
+        Account account,
+        Folder folder,
+        GenericArray<Message>? messages
+    ) {
+        var key = message_cache_key (account, folder);
+        var pending = this.optimistic_dest_headers.get (key);
+        if (pending == null || pending.length == 0)
+            return messages;
+
+        var list = messages;
+        if (list == null)
+            list = new GenericArray<Message> ();
+
+        var have = new HashTable<string, uint8> (str_hash, str_equal);
+        for (uint i = 0; i < list.length; i++) {
+            if (list[i].uid != null && list[i].uid.length > 0)
+                have.set (list[i].uid, 1);
+        }
+
+        var added = false;
+        for (uint i = 0; i < pending.length; i++) {
+            var message = pending[i];
+            if (message.uid == null || message.uid.length == 0)
+                continue;
+            if (have.contains (message.uid))
+                continue;
+            Conversation.apply_folder (message, folder, null);
+            message.local_only = true;
+            list.add (message);
+            have.set (message.uid, 1);
+            added = true;
+        }
+
+        if (!added && messages != null)
+            return messages;
+
+        this.message_cache.set (key, list);
+        touch_message_cache_key (key);
+        this.grouped_list_cache.remove (key);
+        if (added)
+            Utils.sync_log ("optimistic dest inject “%s” → %u headers (+pending)".printf (
+                folder.full_name,
+                list.length
+            ));
+        return list;
+    }
+
+    /* Write RAM headers now without accept_shrink — optimistic moves must not
+     * replace a large on-disk index with a live stub. Always write when the
+     * list holds local_only rows (small folders skip the usual 200 floor). */
+    private void persist_optimistic_move_headers (Account account, Folder folder) {
+        var key = message_cache_key (account, folder);
+        var cache = this.message_cache.get (key);
+        if (cache == null)
+            return;
+
+        var has_local = false;
+        for (uint i = 0; i < cache.length; i++) {
+            if (cache[i].local_only) {
+                has_local = true;
+                break;
+            }
+        }
+        if (!has_local && !header_list_cache_worth_saving (folder, cache))
+            return;
+
+        var existing = this.header_cache_save_sources.get (key);
+        if (existing != 0) {
+            Source.remove (existing);
+            this.header_cache_save_sources.remove (key);
+        }
+        save_header_list_cache (
+            account.source_uid ?? account.uid,
+            folder.full_name,
+            folder.name,
+            cache,
+            false
+        );
+        note_header_high_water (account, folder, cache.length);
     }
 
     private void finish_thread_bulk () {
@@ -8733,6 +8964,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         message.local_only = true;
         this.mail_session.rekey_body (account, from, old_uid, destination, old_uid);
         add_to_folder_cache (account, destination, message);
+        remember_optimistic_dest_header (account, destination, message);
         destination.total++;
         if (unseen)
             destination.unread++;
@@ -8922,13 +9154,25 @@ public class Mail.Window : Adw.ApplicationWindow {
     private void add_to_folder_cache (Account account, Folder folder, Message message) {
         var key = message_cache_key (account, folder);
         var cache = this.message_cache.get (key);
-        if (cache == null) {
-            cache = load_header_list_cache (account, folder);
-            if (cache == null)
+        /* A live folder-changed stub must not swallow a large disk index —
+         * otherwise the optimistic move is the only header left in RAM and
+         * the next open repairs from disk without it. */
+        var disk_n = disk_header_list_count (account, folder);
+        if (cache == null || (disk_n > 0 && cache.length + LARGE_HEADER_GAP < disk_n)) {
+            var from_disk = load_header_list_cache (account, folder);
+            if (from_disk != null && (cache == null || from_disk.length > cache.length)) {
+                if (cache != null)
+                    from_disk = merge_pending_local_headers (cache, from_disk);
+                cache = from_disk;
+                this.message_cache.set (key, cache);
+            } else if (cache == null) {
                 cache = new GenericArray<Message> ();
-            this.message_cache.set (key, cache);
-            touch_message_cache_key (key);
+                this.message_cache.set (key, cache);
+            }
         }
+        touch_message_cache_key (key);
+        /* Stale threaded snapshot would hide the just-moved header. */
+        this.grouped_list_cache.remove (key);
 
         for (uint i = 0; i < cache.length; i++) {
             if (cache[i].uid == message.uid
@@ -9130,7 +9374,13 @@ public class Mail.Window : Adw.ApplicationWindow {
         on_message_selection_changed ();
     }
 
-    public static async Folder? pick_folder (Gtk.Widget parent, GenericArray<Folder> folders, Folder? current, uint count = 1) {
+    public static async Folder? pick_folder (
+        Gtk.Widget parent,
+        GenericArray<Folder> folders,
+        Folder? current,
+        uint count = 1,
+        Account? account = null
+    ) {
         var description = count > 1
             ? _("Choose where to move the selected messages.")
             : _("Choose where to move this message.");
@@ -9148,26 +9398,38 @@ public class Mail.Window : Adw.ApplicationWindow {
             placeholder_text = _("Search folders"),
         };
         search.stop_search.connect (() => dialog.close ());
+
+        /* Account header stays pinned; folder rows collapse like the sidebar tree. */
+        var account_expanded = true;
+        var collapsed = new GenericSet<string> (str_hash, str_equal);
         var list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.SINGLE,
-            valign = Gtk.Align.START,
+            valign = Gtk.Align.FILL,
+            vexpand = true,
         };
-        list.add_css_class ("boxed-list");
+        list.add_css_class ("folder-pick-list");
         list.set_placeholder (new Gtk.Label (_("No matching folders.")) {
             margin_top = 12,
             margin_bottom = 12,
         });
         list.set_filter_func ((row) => {
-            var query = search.text.casefold ().strip ();
-            if (query.length == 0)
-                return true;
-
             var pick = row as FolderPickRow;
             if (pick == null)
                 return false;
-            return pick.mail_folder.name.casefold ().contains (query)
-                || pick.mail_folder.full_name.casefold ().contains (query);
+            return folder_pick_row_visible (
+                pick, list, collapsed, account_expanded, search.text.casefold ().strip ()
+            );
         });
+
+        FolderPickAccountHeader? account_header = null;
+        if (account != null) {
+            account_header = new FolderPickAccountHeader (account);
+            account_header.expanded = true;
+            account_header.toggled.connect (() => {
+                account_expanded = account_header.expanded;
+                list.invalidate_filter ();
+            });
+        }
 
         Folder? picked = null;
         for (uint i = 0; i < folders.length; i++) {
@@ -9177,16 +9439,41 @@ public class Mail.Window : Adw.ApplicationWindow {
             if (folder.is_virtual_view)
                 continue;
 
-            list.append (new FolderPickRow (folder));
+            var pick_row = new FolderPickRow (folder);
+            pick_row.expander_toggled.connect (() => {
+                var key = pick_row.mail_folder.full_name;
+                if (collapsed.contains (key))
+                    collapsed.remove (key);
+                else
+                    collapsed.add (key);
+                folder_pick_refresh_expanders (list, collapsed);
+                list.invalidate_filter ();
+            });
+            list.append (pick_row);
         }
+        folder_pick_refresh_expanders (list, collapsed);
 
         list.row_selected.connect ((row) => {
             var pick = row as FolderPickRow;
-            picked = pick != null ? pick.mail_folder : null;
-            dialog.set_response_enabled ("move", picked != null);
+            if (pick == null || !pick.mail_folder.can_accept_messages) {
+                picked = null;
+                dialog.set_response_enabled ("move", false);
+                return;
+            }
+            picked = pick.mail_folder;
+            dialog.set_response_enabled ("move", true);
         });
 
         search.changed.connect (() => {
+            var query = search.text.strip ();
+            /* Keep the pinned account visible and expand so matches sit under it. */
+            if (account_header != null && query.length > 0 && !account_header.expanded)
+                account_header.expanded = true;
+            /* Search hits show the parent path so omonimi stay distinguishable. */
+            for (int i = 0; list.get_row_at_index (i) != null; i++) {
+                var pick = list.get_row_at_index (i) as FolderPickRow;
+                pick?.set_searching (query.length > 0);
+            }
             list.invalidate_filter ();
             list.unselect_all ();
             picked = null;
@@ -9195,11 +9482,26 @@ public class Mail.Window : Adw.ApplicationWindow {
 
         var scrolled = new Gtk.ScrolledWindow () {
             min_content_height = 280,
+            max_content_height = 400,
+            vexpand = true,
+            hscrollbar_policy = Gtk.PolicyType.NEVER,
             child = list,
         };
-        var content = new Gtk.Box (Gtk.Orientation.VERTICAL, 8);
+
+        var tree = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+        tree.add_css_class ("folder-pick-tree");
+        if (account_header != null)
+            tree.append (account_header);
+        tree.append (scrolled);
+
+        var frame = new Gtk.Frame (null) {
+            child = tree,
+        };
+        frame.add_css_class ("folder-pick-frame");
+
+        var content = new Gtk.Box (Gtk.Orientation.VERTICAL, 10);
         content.append (search);
-        content.append (scrolled);
+        content.append (frame);
         dialog.extra_child = content;
 
         Idle.add (() => {
@@ -9209,6 +9511,64 @@ public class Mail.Window : Adw.ApplicationWindow {
 
         var response = yield dialog.choose (parent, null);
         return response == "move" ? picked : null;
+    }
+
+    private static bool folder_pick_row_visible (
+        FolderPickRow target,
+        Gtk.ListBox list,
+        GenericSet<string> collapsed,
+        bool account_expanded,
+        string query
+    ) {
+        if (query.length > 0) {
+            return target.mail_folder.name.casefold ().contains (query)
+                || target.mail_folder.full_name.casefold ().contains (query);
+        }
+        if (!account_expanded)
+            return false;
+
+        Folder? hide_under = null;
+        uint hide_indent = 0;
+        for (int i = 0; list.get_row_at_index (i) != null; i++) {
+            var row = list.get_row_at_index (i) as FolderPickRow;
+            if (row == null)
+                continue;
+
+            var folder = row.mail_folder;
+            if (hide_under != null && folder.indent > hide_indent) {
+                if (row == target)
+                    return false;
+                continue;
+            }
+
+            hide_under = null;
+            if (row == target)
+                return true;
+
+            if (folder.has_children && collapsed.contains (folder.full_name)) {
+                hide_under = folder;
+                hide_indent = folder.indent;
+            }
+        }
+        return true;
+    }
+
+    private static void folder_pick_refresh_expanders (Gtk.ListBox list, GenericSet<string> collapsed) {
+        for (int i = 0; list.get_row_at_index (i) != null; i++) {
+            var row = list.get_row_at_index (i) as FolderPickRow;
+            if (row == null)
+                continue;
+
+            var has_children = false;
+            for (int j = i + 1; list.get_row_at_index (j) != null; j++) {
+                var next = list.get_row_at_index (j) as FolderPickRow;
+                if (next == null)
+                    continue;
+                has_children = next.mail_folder.indent > row.mail_folder.indent;
+                break;
+            }
+            row.update_expander (has_children, !collapsed.contains (row.mail_folder.full_name));
+        }
     }
 
     private void set_message_actions_enabled (bool enabled) {
@@ -11041,17 +11401,186 @@ public class Mail.Window : Adw.ApplicationWindow {
     }
 }
 
-private class Mail.FolderPickRow : Adw.ActionRow {
+/* Pinned account root for the Move dialog — expand/collapse the folder tree. */
+private class Mail.FolderPickAccountHeader : Gtk.Box {
+    public signal void toggled ();
+
+    private Gtk.Image expander;
+    private bool _expanded = true;
+
+    public bool expanded {
+        get { return this._expanded; }
+        set {
+            if (this._expanded == value)
+                return;
+            this._expanded = value;
+            sync_expander ();
+            toggled ();
+        }
+    }
+
+    public FolderPickAccountHeader (Account account) {
+        Object (orientation: Gtk.Orientation.HORIZONTAL, spacing: 8);
+        add_css_class ("folder-pick-account");
+        hexpand = true;
+        valign = Gtk.Align.CENTER;
+
+        this.expander = new Gtk.Image.from_icon_name ("pan-down-symbolic") {
+            pixel_size = 16,
+            valign = Gtk.Align.CENTER,
+        };
+        this.expander.add_css_class ("folder-expander");
+        this.expander.add_css_class ("dim-label");
+        append (this.expander);
+
+        var icon = new Gtk.Image.from_icon_name ("avatar-default-symbolic");
+        icon.add_css_class ("folder-icon");
+        append (icon);
+
+        var label = new Gtk.Label (account.email ?? account.display_name) {
+            hexpand = true,
+            xalign = 0,
+            ellipsize = Pango.EllipsizeMode.END,
+            use_markup = false,
+        };
+        label.add_css_class ("folder-name");
+        append (label);
+
+        var click = new Gtk.GestureClick ();
+        click.pressed.connect (() => {
+            this.expanded = !this.expanded;
+        });
+        add_controller (click);
+        sync_expander ();
+    }
+
+    private void sync_expander () {
+        this.expander.icon_name = this._expanded ? "pan-down-symbolic" : "pan-end-symbolic";
+        this.expander.tooltip_text = this._expanded ? _("Collapse") : _("Expand");
+        this.tooltip_text = this.expander.tooltip_text;
+    }
+}
+
+/* Same expander + indent model as the sidebar FolderRow. */
+private class Mail.FolderPickRow : Gtk.ListBoxRow {
     public Folder mail_folder { get; construct; }
+    public signal void expander_toggled ();
+
+    private Gtk.Image expander;
+    private Gtk.Box row_box;
+    private Gtk.Label path_label;
+    private bool searching;
 
     public FolderPickRow (Folder folder) {
-        Object (
-            mail_folder: folder,
-            title: folder.name,
-            activatable: true,
-            use_markup: false
-        );
-        add_prefix (new Gtk.Image.from_icon_name (folder.icon_name));
+        Object (mail_folder: folder);
+    }
+
+    construct {
+        /* Select only — Move confirms via the dialog button, not on activate. */
+        this.activatable = false;
+        this.selectable = this.mail_folder.can_accept_messages;
+        add_css_class ("folder-pick-row");
+        if (!this.mail_folder.can_accept_messages)
+            add_css_class ("folder-pick-disabled");
+
+        this.row_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
+            hexpand = true,
+            valign = Gtk.Align.CENTER,
+        };
+
+        this.expander = new Gtk.Image.from_icon_name ("pan-end-symbolic") {
+            pixel_size = 16,
+            valign = Gtk.Align.CENTER,
+        };
+        this.expander.add_css_class ("folder-expander");
+        this.expander.add_css_class ("dim-label");
+        var expander_click = new Gtk.GestureClick ();
+        expander_click.set_propagation_phase (Gtk.PropagationPhase.CAPTURE);
+        expander_click.pressed.connect (on_expander_pressed);
+        this.expander.add_controller (expander_click);
+        this.row_box.append (this.expander);
+
+        var icon = new Gtk.Image.from_icon_name (this.mail_folder.icon_name);
+        icon.add_css_class ("folder-icon");
+        this.row_box.append (icon);
+
+        var text = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
+            hexpand = true,
+            valign = Gtk.Align.CENTER,
+        };
+        var label = new Gtk.Label (this.mail_folder.name) {
+            hexpand = true,
+            xalign = 0,
+            ellipsize = Pango.EllipsizeMode.END,
+            use_markup = false,
+        };
+        label.add_css_class ("folder-name");
+        text.append (label);
+
+        this.path_label = new Gtk.Label (parent_path_label (this.mail_folder)) {
+            hexpand = true,
+            xalign = 0,
+            ellipsize = Pango.EllipsizeMode.MIDDLE,
+            use_markup = false,
+            visible = false,
+        };
+        this.path_label.add_css_class ("folder-pick-path");
+        this.path_label.add_css_class ("dim-label");
+        text.append (this.path_label);
+        this.row_box.append (text);
+
+        this.child = this.row_box;
+        apply_tree_indent ();
+        this.tooltip_text = this.mail_folder.can_accept_messages
+            ? this.mail_folder.full_name
+            : _("This folder cannot receive messages.");
+        update_expander (this.mail_folder.has_children, true);
+    }
+
+    public void set_searching (bool searching) {
+        if (this.searching == searching)
+            return;
+        this.searching = searching;
+        var path = parent_path_label (this.mail_folder);
+        this.path_label.label = path ?? "";
+        this.path_label.visible = searching && path != null && path.length > 0;
+        /* Flat list while filtering — the path subtitle carries hierarchy. */
+        this.expander.visible = !searching;
+        apply_tree_indent ();
+    }
+
+    private void apply_tree_indent () {
+        this.row_box.margin_start = (!this.searching && this.mail_folder.indent > 0)
+            ? (int) this.mail_folder.indent * 16
+            : 0;
+    }
+
+    private static string? parent_path_label (Folder folder) {
+        var full = folder.full_name ?? "";
+        var name = folder.name ?? "";
+        if (full.length == 0 || full == name)
+            return null;
+        var slash = full.last_index_of_char ('/');
+        if (slash > 0)
+            return full.substring (0, slash).replace ("/", " › ");
+        return full;
+    }
+
+    private void on_expander_pressed (Gtk.GestureClick click, int n_press, double x, double y) {
+        if (!this.mail_folder.has_children)
+            return;
+        expander_toggled ();
+        click.set_state (Gtk.EventSequenceState.CLAIMED);
+    }
+
+    public void update_expander (bool has_children, bool expanded) {
+        this.mail_folder.has_children = has_children;
+        this.expander.opacity = has_children ? 1 : 0;
+        this.expander.can_target = has_children;
+        this.expander.icon_name = expanded ? "pan-down-symbolic" : "pan-end-symbolic";
+        this.expander.tooltip_text = has_children
+            ? (expanded ? _("Collapse") : _("Expand"))
+            : null;
     }
 }
 

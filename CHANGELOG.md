@@ -19,8 +19,26 @@ refactors unless they affect behaviour.
 
 ## [Unreleased](https://github.com/stalvatero/letter/compare/v1.6.0...HEAD)
 
+### Added
+
+- Signature (and compose) formatting can insert and edit hyperlinks from the
+  toolbar (`insert-link-symbolic`) or the editor context menu, with Ctrl+K.
+  The link dialog offers clickable `https://` and `mailto:` chips instead of a
+  fixed placeholder. Bold / italic / underline / strikethrough sit in one
+  text-style popover so the compose toolbar stays compact.
+
 ### Changed
 
+- Preferences are split into four header pages (Accounts, Appearance, Behavior,
+  Integrations) instead of one long scrolling sheet with section chips.
+- Folder sidebar and Move dialog folder tree use the same padding and height
+  as Adwaita `.navigation-sidebar` (GNOME Files places), so both lists are as
+  compact as native GTK4 sidebars.
+- The Move dialog shows the account folder tree (indented, with expanders and
+  icons) instead of a flat name list, so nested folders stay clear. The account
+  header stays pinned while searching; non-writable nodes such as “[Gmail]”
+  are disabled; Move applies only from the dialog button. Search hits show the
+  parent path so identically named folders stay distinguishable ([#34](https://github.com/stalvatero/letter/issues/34)).
 - Updated Brazilian Portuguese translation by
   [Thiago Haeitmann](https://github.com/ThiagoHaeitmann).
 - Important messages show an icon with a tooltip instead of a labelled pill;
@@ -34,6 +52,26 @@ refactors unless they affect behaviour.
   Pressing the Escape key or clicking the search icon again will close the search bar.
 - Search chips scroll horizontally in one line instead of wrapping and growing
   the toolbar.
+
+### Fixed
+
+- In the signature editor, Tab from the name field jumps straight into the
+  compose area instead of stepping through the formatting toolbar.
+- Recipient completion ranks people you write to often above cold address-book
+  near-matches, seeds suggestions from Sent (including mail sent in other
+  clients), remembers Bcc, and prefers the composing account’s address books
+  (honouring EDS Autocomplete IncludeMe so GAL / Organizational Users can
+  participate). Other accounts remain as fallback ([#33](https://github.com/stalvatero/letter/issues/33),
+  [#32](https://github.com/stalvatero/letter/issues/32)).
+- Moved messages appear in the destination folder immediately (cache-first),
+  without waiting for F5 or the sync timer. Gmail Inbox / All Mail twins with
+  the same Message-ID still count as one mail in a conversation.
+- Online Accounts opens again on desktops without GNOME Settings (for example
+  COSMIC) when `gnome-online-accounts-gtk` is installed.
+  Thanks to [Thiago Haeitmann](https://github.com/ThiagoHaeitmann).
+- Opening large folders is faster: cleaning addresses and saving the local
+  header index spend less time on the main thread.
+  Thanks to [Illya Yalovyy](https://github.com/IllyaYalovyy).
 
 
 ## [1.6.0](https://github.com/stalvatero/letter/compare/v1.5.0...v1.6.0)

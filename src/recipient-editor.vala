@@ -9,6 +9,7 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
     private Gtk.ScrolledWindow suggest_scrolled;
     private Gtk.ListBox suggest_list;
     private ContactStore? contacts;
+    private Account? prefer_account;
     private GenericArray<Chip> chips = new GenericArray<Chip> ();
     private Chip? selected_chip;
     private bool finishing_edit;
@@ -256,6 +257,10 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
         this.contacts = store;
         this.book_button.visible = store != null;
         store?.warm ();
+    }
+
+    public void set_prefer_account (Account? account) {
+        this.prefer_account = account;
     }
 
     public void add_recipient (Recipient recipient) {
@@ -549,7 +554,7 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
         }
 
         this.suggest_generation++;
-        fill_suggest (this.contacts.search_collected (needle, 12));
+        fill_suggest (this.contacts.search_collected (needle, 12, this.prefer_account));
         set_searching (true);
 
         if (immediate) {
@@ -570,7 +575,7 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
             return;
         }
         var generation = ++this.suggest_generation;
-        var hits = yield this.contacts.search (needle, 12, null, false);
+        var hits = yield this.contacts.search (needle, 12, null, false, this.prefer_account);
         if (generation != this.suggest_generation || this.input.text.strip () != needle)
             return;
 

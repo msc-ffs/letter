@@ -1918,6 +1918,7 @@ public class Mail.MailSession : Camel.Session {
         var added = false;
         for (uint i = 0; i < previous.length; i++) {
             var message = previous[i];
+            /* local_only optimistic moves and local-sent/draft placeholders. */
             if (!message.is_placeholder)
                 continue;
             if (have_uid.contains (message.uid))
