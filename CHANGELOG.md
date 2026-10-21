@@ -7,7 +7,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 How we maintain it:
 
-- During development, add bullets under **[Unreleased](https://github.com/stalvatero/letter/compare/v1.6.0...HEAD)**.
+- During development, add bullets under **[Unreleased](https://github.com/stalvatero/letter/compare/v1.7.0...HEAD)**.
 - On each release (rc or stable), rename that section to the version + date, and
 copy a short summary into `data/io.github.stalvatero.Letter.metainfo.xml.in.in`
 (`<releases>`, leave msgstr empty in po files — keep release notes in English)
@@ -17,30 +17,22 @@ refactors unless they affect behaviour.
 
 
 
-## [Unreleased](https://github.com/stalvatero/letter/compare/v1.6.0...HEAD)
+## [Unreleased](https://github.com/stalvatero/letter/compare/v1.7.0...HEAD)
+
+## [1.7.0](https://github.com/stalvatero/letter/compare/v1.6.0...v1.7.0) - 2026-10-21
 
 ### Added
 
 - Preferences → Accounts: drag the handle on an account row to set a custom
   order (no longer alphabetical only). The same order is used in the account
   rail and under Local library.
+- Compose suggestions: recent addresses show a close button to remove a bad or
+  unwanted entry from history (address-book contacts are unchanged).
 - Signature (and compose) formatting can insert and edit hyperlinks from the
   toolbar (`insert-link-symbolic`) or the editor context menu, with Ctrl+K.
   The link dialog offers clickable `https://` and `mailto:` chips instead of a
   fixed placeholder. Bold / italic / underline / strikethrough sit in one
   text-style popover so the compose toolbar stays compact.
-
-### Added
-
-- Compose suggestions: recent addresses show a close button to remove a bad or
-  unwanted entry from history (address-book contacts are unchanged).
-
-### Fixed
-
-- Compose address suggestions no longer show glued Sent “To” display names
-  (several people as one chip). Harvest now uses the raw header with addresses,
-  and corrupted collected-address entries are cleaned on load. The suggestion
-  popover left-aligns with the start of the typed text.
 
 ### Changed
 
@@ -74,7 +66,7 @@ refactors unless they affect behaviour.
 - Folder and message panes resize more like GNOME native Gtk4 apps.
 - For greater visual consistency and an improved user experience, the search bar
   has been removed from the reading pane. A search icon is now located in the
-  message list panel (which can also be triggered via the shortcut Ctrl+F); 
+  message list panel (which can also be triggered via the shortcut Ctrl+F);
   clicking it activates the search bar within the appropriate pane.
   Pressing the Escape key or clicking the search icon again will close the search bar.
 - Search chips scroll horizontally in one line instead of wrapping and growing
@@ -82,6 +74,10 @@ refactors unless they affect behaviour.
 
 ### Fixed
 
+- Compose address suggestions no longer show glued Sent “To” display names
+  (several people as one chip). Harvest now uses the raw header with addresses,
+  and corrupted collected-address entries are cleaned on load. The suggestion
+  popover left-aligns with the start of the typed text.
 - In the signature editor, Tab from the name field jumps straight into the
   compose area instead of stepping through the formatting toolbar.
 - Recipient completion ranks people you write to often above cold address-book

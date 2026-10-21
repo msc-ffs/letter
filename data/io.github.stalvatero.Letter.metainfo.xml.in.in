@@ -56,6 +56,18 @@
     <category>Email</category>
   </categories>
   <releases>
+    <release version="1.7.0" type="stable" date="2026-10-21">
+      <description>
+        <p>
+          Preferences polish: custom account order by drag-and-drop, clearer
+          account-rail enable and colour options, and four header pages.
+          Compose gains forgettable recent-address suggestions and hyperlink
+          editing. The Move dialog uses a real folder tree; search moves to the
+          message list. Brazilian Portuguese update and several sync and
+          suggestion fixes.
+        </p>
+      </description>
+    </release>
     <release version="1.6.0" type="stable" date="2026-10-15">
       <description>
         <p>
