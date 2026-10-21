@@ -4707,9 +4707,8 @@ public class Mail.Window : Adw.ApplicationWindow {
         var messages = new GenericArray<Message> ();
         for (uint i = 0; i < items.length; i++) {
             var item = items[i];
-            var preview = item.plain ?? "";
-            preview = preview.strip ();
-            if (preview.length > 120)
+            var preview = Utils.sanitize_message_preview (item.plain);
+            if (preview != null && preview.length > 120)
                 preview = preview.substring (0, 120);
             var status = item.last_error != null && item.attempts > 0
                 ? item.last_error
@@ -5072,9 +5071,9 @@ public class Mail.Window : Adw.ApplicationWindow {
         var from = header_cache_unescape (parts[5]);
         var to = header_cache_unescape (parts[6]);
         var cc = parts.length > 7 ? header_cache_unescape (parts[7]) : "";
-        var preview = parts.length > 8 ? header_cache_unescape (parts[8]) : "";
-        if (preview.length == 0)
-            preview = null;
+        var preview = Utils.sanitize_message_preview (
+            parts.length > 8 ? header_cache_unescape (parts[8]) : null
+        );
         var conversation_key = parts.length > 9 ? header_cache_unescape (parts[9]) : "";
         if (conversation_key.length == 0)
             conversation_key = null;

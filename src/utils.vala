@@ -1404,6 +1404,53 @@ namespace Mail.Utils {
         return collapse_spaces (text);
     }
 
+    /* Camel (and HTML→text) often put image alt text or filenames in the
+     * folder-summary preview: "[image: Google]", "[Firma.png]". Those clutter
+     * the message list and are useless when the body is mostly pictures. */
+    public static string? sanitize_message_preview (string? raw) {
+        if (raw == null || raw.length == 0)
+            return null;
+
+        var text = raw.replace ("\r\n", "\n").replace ("\r", "\n").replace ("\n", " ").strip ();
+        try {
+            var image_re = new Regex ("\\[\\s*image\\s*:[^\\]]*\\]", RegexCompileFlags.CASELESS);
+            text = image_re.replace (text, text.length, 0, "");
+            var cid_re = new Regex ("\\[\\s*cid:[^\\]]*\\]", RegexCompileFlags.CASELESS);
+            text = cid_re.replace (text, text.length, 0, "");
+            var file_re = new Regex (
+                "\\[[^\\]]+\\.(?:png|jpe?g|gif|webp|svg|bmp|tiff?|ico)\\s*\\]",
+                RegexCompileFlags.CASELESS
+            );
+            text = file_re.replace (text, text.length, 0, "");
+            var angle_re = new Regex (
+                "<[^<>]+\\.(?:png|jpe?g|gif|webp|svg|bmp|tiff?|ico)\\s*>",
+                RegexCompileFlags.CASELESS
+            );
+            text = angle_re.replace (text, text.length, 0, "");
+        } catch (Error e) {
+        }
+
+        text = collapse_spaces (text).strip ();
+        if (text.length == 0)
+            return null;
+
+        /* After stripping images, only a signature separator may remain. */
+        if (text.has_prefix ("--")) {
+            var after = text.substring (2).strip ();
+            if (after.length == 0)
+                return null;
+            bool looks_like_prose = after.contains (".")
+                || after.contains ("!")
+                || after.contains ("?")
+                || after.contains (":")
+                || after.length > 72;
+            if (!looks_like_prose)
+                return null;
+        }
+
+        return text;
+    }
+
     private static string unwrap_matching_quotes (string text) {
         if (text.char_count () < 2)
             return text;

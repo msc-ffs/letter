@@ -19,6 +19,12 @@ refactors unless they affect behaviour.
 
 ## [Unreleased](https://github.com/stalvatero/letter/compare/v1.7.0...HEAD)
 
+### Fixed
+
+- Message-list preview no longer shows Camel image placeholders such as
+  `[image: Google]` or `[Firma.png]`. Image-only snippets stay empty; real
+  text after a logo alt remains.
+
 ## [1.7.0](https://github.com/stalvatero/letter/compare/v1.6.0...v1.7.0) - 2026-10-21
 
 ### Added

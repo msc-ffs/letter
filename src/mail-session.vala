@@ -2008,9 +2008,7 @@ public class Mail.MailSession : Camel.Session {
         if (subject == null || subject.length == 0)
             subject = _("(No subject)");
 
-        var preview = info.get_preview ();
-        if (preview != null && preview.length == 0)
-            preview = null;
+        var preview = Utils.sanitize_message_preview (info.get_preview ());
 
         var from_raw = info.get_from ();
         var to_raw = info.get_to ();
@@ -2090,8 +2088,8 @@ public class Mail.MailSession : Camel.Session {
         var from = Utils.format_internet_address (mime.get_from ());
         var to = Utils.format_internet_address (mime.get_recipients (Camel.RECIPIENT_TYPE_TO));
         var cc = Utils.format_internet_address (mime.get_recipients (Camel.RECIPIENT_TYPE_CC));
-        var preview = body.strip ().replace ("\n", " ");
-        if (preview.length > 140)
+        var preview = Utils.sanitize_message_preview (body);
+        if (preview != null && preview.length > 140)
             preview = preview.substring (0, 140);
 
         var msgid = mime.get_message_id ();
@@ -2129,7 +2127,7 @@ public class Mail.MailSession : Camel.Session {
             date = date,
             seen = true,
             has_attachment = mime.has_attachment (),
-            preview = preview.length > 0 ? preview : null,
+            preview = preview,
             folder_name = folder.name,
             folder_full_name = folder.full_name,
             outgoing = true,

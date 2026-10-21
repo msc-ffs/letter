@@ -52,6 +52,24 @@ void test_sanitize_recipient_text () {
     assert_cmpstr (Mail.Utils.sanitize_recipient_text ("jane@example.com;"), EQ, "jane@example.com");
 }
 
+void test_sanitize_message_preview () {
+    assert (Mail.Utils.sanitize_message_preview (null) == null);
+    assert (Mail.Utils.sanitize_message_preview ("") == null);
+    assert (Mail.Utils.sanitize_message_preview ("[image: Google]") == null);
+    assert (Mail.Utils.sanitize_message_preview ("[Firma Concorso.png]") == null);
+    assert (Mail.Utils.sanitize_message_preview ("-- Salvatore Oscurato [Firma Concorso.png]") == null);
+    assert_cmpstr (
+        Mail.Utils.sanitize_message_preview ("[image: Google] Hai consentito all'app GNOME"),
+        EQ,
+        "Hai consentito all'app GNOME"
+    );
+    assert_cmpstr (
+        Mail.Utils.sanitize_message_preview ("Ciao\nmondo"),
+        EQ,
+        "Ciao mondo"
+    );
+}
+
 void test_header_cache_escape () {
     assert_cmpstr (Mail.Window.header_cache_escape (null), EQ, "");
     assert_cmpstr (Mail.Window.header_cache_escape (""), EQ, "");
@@ -75,6 +93,7 @@ void main (string[] args) {
     Test.add_func ("/replace-literal/matches-string-replace", test_replace_literal_matches_string_replace);
     Test.add_func ("/replace-literal/matches-string-replace-on-empty-pattern", test_replace_literal_matches_string_replace_on_empty_pattern);
     Test.add_func ("/sanitize-recipient-text/cleans-names", test_sanitize_recipient_text);
+    Test.add_func ("/sanitize-message-preview/strips-image-placeholders", test_sanitize_message_preview);
     Test.add_func ("/header-cache/escape", test_header_cache_escape);
     Test.add_func ("/header-cache/escape-round-trip", test_header_cache_escape_round_trip);
     Test.run ();

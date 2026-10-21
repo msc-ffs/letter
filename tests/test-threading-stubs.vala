@@ -6,4 +6,10 @@ namespace Mail.Utils {
     public static Pango.AttrList? search_highlight_attrs (string text, GenericArray<string>? tokens) {
         return null;
     }
+
+    public static string? sanitize_message_preview (string? raw) {
+        if (raw == null || raw.length == 0)
+            return null;
+        return raw;
+    }
 }

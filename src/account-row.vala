@@ -337,7 +337,7 @@ public class Mail.MessageRow : Gtk.Box {
         var folder_name = latest != null && latest.show_folder ? latest.folder_name : null;
         this.folder_label.label = folder_name ?? "";
         this.folder_label.visible = folder_name != null && folder_name.length > 0;
-        var preview = conversation.preview;
+        var preview = Utils.sanitize_message_preview (conversation.preview);
         set_highlighted (this.preview_label, preview ?? "");
         this.preview_label.visible = preview != null && preview.length > 0;
         this.count_label.label = conversation.messages.length.to_string ();
