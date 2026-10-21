@@ -7,11 +7,21 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
     private Adw.SwitchRow aggregate_sound_row;
     private Adw.ComboRow interval_row;
     private Adw.ComboRow cache_days_row;
+    private Adw.SwitchRow rail_enabled_row;
+    private Adw.ComboRow rail_color_row;
+    private Adw.ActionRow rail_palette_row;
+    private Adw.SwitchRow avatars_row;
+    private Gtk.Box rail_swatch_box;
+    private Gtk.Button rail_picker_button;
     private Settings settings;
     private SignatureStore signatures;
     private Adw.PreferencesGroup accounts_group;
     private GenericArray<Adw.ActionRow> account_rows = new GenericArray<Adw.ActionRow> ();
+    private GenericArray<Adw.ActionRow> cache_account_rows = new GenericArray<Adw.ActionRow> ();
+    private Adw.ActionRow? account_drop_highlight;
     private bool updating_sound;
+    private bool updating_rail_swatches;
+    private bool updating_account_order;
 
     private const string[] SOUND_IDS = {
         "message-new-instant",
@@ -39,9 +49,9 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             description = _("Letter reads the same Evolution Data Server used by Calendar and Contacts, and the same GNOME Online Accounts for Google, Microsoft 365, and IMAP."),
         };
 
-        integration.add (count_row (_("Mail accounts"), store.items.get_n_items ()));
-        integration.add (count_row (_("Calendars"), store.calendar_count));
-        integration.add (count_row (_("Address books"), store.contact_count));
+        add_prefs_row (integration, count_row (_("Mail accounts"), store.items.get_n_items ()));
+        add_prefs_row (integration, count_row (_("Calendars"), store.calendar_count));
+        add_prefs_row (integration, count_row (_("Address books"), store.contact_count));
 
         var appearance = new Adw.PreferencesGroup () {
             title = _("Appearance"),
@@ -77,7 +87,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             if (theme_row.selected != want)
                 theme_row.selected = want;
         });
-        appearance.add (theme_row);
+        add_prefs_row (appearance, theme_row);
 
         var body_bg_row = new Adw.ComboRow () {
             title = _("Reading mode"),
@@ -96,45 +106,64 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
                 body_bg_row.selected == 1 ? "follow-system" : "always-light"
             );
         });
-        appearance.add (body_bg_row);
+        add_prefs_row (appearance, body_bg_row);
 
-        var rail_row = new Adw.ComboRow () {
-            title = _("Accounts rail"),
-            subtitle = _("Customise the account sidebar."),
+        migrate_account_rail_settings (this.settings);
+
+        this.rail_enabled_row = new Adw.SwitchRow () {
+            title = _("Enable account rail"),
+            subtitle = _("Show or hide the sidebar for quick account switching."),
+            subtitle_lines = 2,
+            active = this.settings.get_boolean ("account-rail-enabled"),
+        };
+        this.rail_enabled_row.notify["active"].connect (() => {
+            this.settings.set_boolean ("account-rail-enabled", this.rail_enabled_row.active);
+            update_rail_prefs_visibility ();
+        });
+        add_prefs_row (appearance, this.rail_enabled_row);
+
+        this.rail_color_row = new Adw.ComboRow () {
+            title = _("Account rail colour"),
+            subtitle = _("Accent colour, follow the window theme, or a custom colour."),
             subtitle_lines = 2,
             model = new Gtk.StringList ({
                 _("Default"),
-                _("Theme colour"),
-                _("Hide"),
+                _("Follow system"),
+                _("Custom"),
             }),
         };
-        var rail = this.settings.get_string ("account-rail");
-        rail_row.selected = rail == "theme" ? 1 : rail == "hide" ? 2 : 0;
-        rail_row.notify["selected"].connect (() => {
-            switch (rail_row.selected) {
+        var rail_mode = this.settings.get_string ("account-rail");
+        this.rail_color_row.selected = rail_mode == "theme" ? 1 : rail_mode == "custom" ? 2 : 0;
+        this.rail_color_row.notify["selected"].connect (() => {
+            switch (this.rail_color_row.selected) {
                 case 1:
                     this.settings.set_string ("account-rail", "theme");
                     break;
                 case 2:
-                    this.settings.set_string ("account-rail", "hide");
+                    this.settings.set_string ("account-rail", "custom");
                     break;
                 default:
                     this.settings.set_string ("account-rail", "default");
                     break;
             }
+            update_rail_prefs_visibility ();
         });
-        appearance.add (rail_row);
+        add_prefs_row (appearance, this.rail_color_row);
 
-        var avatars_row = new Adw.SwitchRow () {
+        this.rail_palette_row = build_rail_palette_row ();
+        add_prefs_row (appearance, this.rail_palette_row);
+
+        this.avatars_row = new Adw.SwitchRow () {
             title = _("Account pictures"),
             subtitle = _("Show profile pictures or initials in the accounts rail."),
             subtitle_lines = 2,
             active = this.settings.get_boolean ("account-avatars"),
         };
-        avatars_row.notify["active"].connect (() => {
-            this.settings.set_boolean ("account-avatars", avatars_row.active);
+        this.avatars_row.notify["active"].connect (() => {
+            this.settings.set_boolean ("account-avatars", this.avatars_row.active);
         });
-        appearance.add (avatars_row);
+        add_prefs_row (appearance, this.avatars_row);
+        update_rail_prefs_visibility ();
 
         var reading = new Adw.PreferencesGroup () {
             title = _("Reading"),
@@ -164,7 +193,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
                     break;
             }
         });
-        reading.add (pane_row);
+        add_prefs_row (reading, pane_row);
 
         var read_row = new Adw.ComboRow () {
             title = _("Mark as read"),
@@ -191,18 +220,18 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
                     break;
             }
         });
-        reading.add (read_row);
+        add_prefs_row (reading, read_row);
 
         var recovery_row = new Adw.SwitchRow () {
             title = _("Retry failed remote images"),
             subtitle = _("If an image from a trusted sender fails to load because the site’s HTTPS certificate chain is incomplete, download it again with a stricter recovery path. Off by default; uses extra network requests."),
-            subtitle_lines = 3,
+            subtitle_lines = 5,
             active = this.settings.get_boolean ("recover-remote-images"),
         };
         recovery_row.notify["active"].connect (() => {
             this.settings.set_boolean ("recover-remote-images", recovery_row.active);
         });
-        reading.add (recovery_row);
+        add_prefs_row (reading, recovery_row);
 
         var conversation_row = new Adw.SwitchRow () {
             title = _("Conversations"),
@@ -212,7 +241,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
         conversation_row.notify["active"].connect (() => {
             this.settings.set_boolean ("conversation-view", conversation_row.active);
         });
-        reading.add (conversation_row);
+        add_prefs_row (reading, conversation_row);
 
         var notifications = new Adw.PreferencesGroup () {
             title = _("Notifications"),
@@ -227,7 +256,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             this.sound_row.sensitive = notify_row.active;
             this.aggregate_sound_row.sensitive = notify_row.active;
         });
-        notifications.add (notify_row);
+        add_prefs_row (notifications, notify_row);
 
         this.sound_row = new Adw.ComboRow () {
             title = _("Notification sound"),
@@ -254,18 +283,19 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
         this.sound_row.notify["selected"].connect (() => {
             on_sound_selected.begin ();
         });
-        notifications.add (this.sound_row);
+        add_prefs_row (notifications, this.sound_row);
 
         this.aggregate_sound_row = new Adw.SwitchRow () {
             title = _("Aggregate sound"),
             subtitle = _("On: one sound for all new mail in a check cycle. Off: a sound for every new message."),
+            subtitle_lines = 4,
             active = this.settings.get_boolean ("notification-sound-aggregate"),
             sensitive = notify_row.active,
         };
         this.aggregate_sound_row.notify["active"].connect (() => {
             this.settings.set_boolean ("notification-sound-aggregate", this.aggregate_sound_row.active);
         });
-        notifications.add (this.aggregate_sound_row);
+        add_prefs_row (notifications, this.aggregate_sound_row);
 
         var sync = new Adw.PreferencesGroup () {
             title = _("Synchronization"),
@@ -274,7 +304,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
 
         this.interval_row = new Adw.ComboRow () {
             title = _("Check for new mail"),
-            subtitle_lines = 2,
+            subtitle_lines = 3,
             model = new Gtk.StringList ({
                 _("Every minute"),
                 _("Every 5 minutes"),
@@ -292,11 +322,11 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             update_interval_subtitle ();
         });
         update_interval_subtitle ();
-        sync.add (this.interval_row);
+        add_prefs_row (sync, this.interval_row);
 
         this.cache_days_row = new Adw.ComboRow () {
             title = _("Download message bodies"),
-            subtitle_lines = 3,
+            subtitle_lines = 5,
             model = new Gtk.StringList ({
                 _("Last 2 months"),
                 _("Last 6 months"),
@@ -313,7 +343,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             update_cache_subtitle ();
         });
         update_cache_subtitle ();
-        sync.add (this.cache_days_row);
+        add_prefs_row (sync, this.cache_days_row);
 
         this.cache_group = new Adw.PreferencesGroup () {
             title = _("Local library"),
@@ -323,12 +353,12 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             title = _("Disk used"),
             sensitive = false,
         };
-        this.cache_group.add (this.total_row);
+        add_prefs_row (this.cache_group, this.total_row);
         fill_cache_accounts ();
 
         var accounts = new Adw.PreferencesGroup () {
             title = _("Accounts"),
-            description = _("Add or remove providers in GNOME Settings. Changes appear here automatically."),
+            description = _("Add or remove providers in GNOME Settings. Drag accounts to set the order in the rail and Local library."),
         };
         this.accounts_group = accounts;
 
@@ -338,11 +368,22 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
             activatable = true,
         };
         settings_row.add_prefix (new Gtk.Image.from_icon_name ("list-add-symbolic"));
-        settings_row.add_suffix (new Gtk.Image.from_icon_name ("go-next-symbolic"));
+        settings_row.add_suffix (new Gtk.Image.from_icon_name ("go-next-symbolic") {
+            valign = Gtk.Align.CENTER,
+        });
         settings_row.activated.connect (() => Utils.open_online_accounts ());
-        accounts.add (settings_row);
+        add_prefs_row (accounts, settings_row);
         fill_mail_accounts ();
-        this.store.changed.connect (fill_mail_accounts);
+        this.store.changed.connect (() => {
+            fill_mail_accounts ();
+            fill_cache_accounts ();
+        });
+        this.settings.changed["account-order"].connect (() => {
+            if (this.updating_account_order)
+                return;
+            fill_mail_accounts ();
+            fill_cache_accounts ();
+        });
 
         var deps_group = new Adw.PreferencesGroup ();
         var deps_row = new Adw.ActionRow () {
@@ -356,7 +397,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
         deps_row.activated.connect (() => {
             push_subpage (new DependencyListPage ());
         });
-        deps_group.add (deps_row);
+        add_prefs_row (deps_group, deps_row);
 
         /* Four top-level pages — Adw.PreferencesDialog shows a ViewSwitcher
          * in the header (same pattern as GNOME Terminal / Settings). */
@@ -400,6 +441,15 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
         widen_page_content (appearance_page, PAGE_CONTENT_WIDTH);
         widen_page_content (behavior_page, PAGE_CONTENT_WIDTH);
         widen_page_content (integrations_page, PAGE_CONTENT_WIDTH);
+        /* PreferencesDialog has no widget tree until mapped — polish then. */
+        this.map.connect (() => {
+            polish_prefs_rows_under (this);
+        });
+    }
+
+    private static void add_prefs_row (Adw.PreferencesGroup group, Adw.ActionRow row) {
+        polish_prefs_row (row);
+        group.add (row);
     }
 
     private static void widen_page_content (Adw.PreferencesPage page, int size) {
@@ -412,6 +462,417 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
                 return;
             }
             widget = widget.get_first_child ();
+        }
+    }
+
+    private static Gtk.ListItemFactory? prefs_combo_factory;
+
+    /** Reserve action space (CSS) and right-align ComboRow values. */
+    private static void polish_prefs_rows_under (Gtk.Widget widget) {
+        var row = widget as Adw.ActionRow;
+        if (row != null)
+            polish_prefs_row (row);
+        for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ())
+            polish_prefs_rows_under (child);
+    }
+
+    private static void polish_prefs_row (Adw.ActionRow row) {
+        if (row.has_css_class ("prefs-row-polished"))
+            return;
+        row.add_css_class ("prefs-row-polished");
+
+        var combo = row as Adw.ComboRow;
+        if (combo != null)
+            combo.factory = prefs_combo_value_factory ();
+
+        row.map.connect (() => {
+            align_prefs_row_suffixes (row);
+            /* ComboRow builds suffix children asynchronously; re-pack once. */
+            Idle.add (() => {
+                align_prefs_row_suffixes (row);
+                return Source.REMOVE;
+            });
+        });
+        if (row.get_mapped ()) {
+            align_prefs_row_suffixes (row);
+            Idle.add (() => {
+                align_prefs_row_suffixes (row);
+                return Source.REMOVE;
+            });
+        }
+    }
+
+    private static Gtk.ListItemFactory prefs_combo_value_factory () {
+        if (prefs_combo_factory != null)
+            return prefs_combo_factory;
+
+        var factory = new Gtk.SignalListItemFactory ();
+        factory.setup.connect ((obj) => {
+            var list_item = (Gtk.ListItem) obj;
+            var label = new Gtk.Label ("") {
+                xalign = 1.0f,
+                ellipsize = Pango.EllipsizeMode.END,
+                hexpand = true,
+                halign = Gtk.Align.FILL,
+            };
+            label.add_css_class ("prefs-combo-value");
+            list_item.child = label;
+        });
+        factory.bind.connect ((obj) => {
+            var list_item = (Gtk.ListItem) obj;
+            var label = list_item.child as Gtk.Label;
+            var value = list_item.item as Gtk.StringObject;
+            if (label == null)
+                return;
+            label.label = value != null ? value.string : "";
+            label.xalign = 1.0f;
+        });
+        prefs_combo_factory = factory;
+        return factory;
+    }
+
+    private static void align_prefs_row_suffixes (Adw.ActionRow row) {
+        var suffixes = find_widget_with_class (row, "suffixes");
+        if (suffixes == null)
+            return;
+
+        var box = suffixes as Gtk.Box;
+        Gtk.Widget? spacer = null;
+        for (var child = suffixes.get_first_child (); child != null; child = child.get_next_sibling ()) {
+            if (child.has_css_class ("prefs-suffix-spacer")) {
+                spacer = child;
+                break;
+            }
+        }
+
+        /* Leading expander: keep the reserved action column, pack real
+         * controls (combo, chevron, switch, buttons, GOA arrow) on the end. */
+        if (spacer == null) {
+            spacer = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0);
+            spacer.add_css_class ("prefs-suffix-spacer");
+            spacer.hexpand = true;
+            if (box != null)
+                box.prepend (spacer);
+            else
+                spacer.insert_before (suffixes, suffixes.get_first_child ());
+        } else if (suffixes.get_first_child () != spacer) {
+            spacer.unparent ();
+            if (box != null)
+                box.prepend (spacer);
+            else
+                spacer.insert_before (suffixes, suffixes.get_first_child ());
+        }
+        spacer.hexpand = true;
+
+        for (var child = suffixes.get_first_child (); child != null; child = child.get_next_sibling ()) {
+            if (child.has_css_class ("prefs-suffix-spacer"))
+                continue;
+            child.hexpand = false;
+            child.halign = Gtk.Align.END;
+        }
+    }
+
+    private static Gtk.Widget? find_widget_with_class (Gtk.Widget widget, string css_class) {
+        if (widget.has_css_class (css_class))
+            return widget;
+        for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ()) {
+            var found = find_widget_with_class (child, css_class);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
+    private static void migrate_account_rail_settings (Settings settings) {
+        if (settings.get_string ("account-rail") != "hide")
+            return;
+        settings.set_boolean ("account-rail-enabled", false);
+        settings.set_string ("account-rail", "default");
+    }
+
+    private void update_rail_prefs_visibility () {
+        var enabled = this.rail_enabled_row.active;
+        this.rail_color_row.visible = enabled;
+        this.avatars_row.visible = enabled;
+        this.rail_palette_row.visible = enabled && this.rail_color_row.selected == 2;
+        if (this.rail_palette_row.visible)
+            sync_rail_swatches ();
+    }
+
+    private Adw.ActionRow build_rail_palette_row () {
+        var row = new Adw.ActionRow () {
+            title = _("Custom colour"),
+            subtitle = _("Choose a colour or pick a new one"),
+            subtitle_lines = 2,
+            activatable = false,
+        };
+
+        this.rail_swatch_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            valign = Gtk.Align.CENTER,
+            hexpand = false,
+        };
+
+        Gtk.ToggleButton? group = null;
+        for (int i = 0; i < 9; i++) {
+            var accent = (Adw.AccentColor) i;
+            var rgba = accent.to_rgba ();
+            var hex = rgba_to_hex (rgba);
+            var swatch = new Gtk.ToggleButton () {
+                tooltip_text = accent_color_label (accent),
+                valign = Gtk.Align.CENTER,
+                halign = Gtk.Align.CENTER,
+            };
+            swatch.add_css_class ("circular");
+            swatch.add_css_class ("rail-swatch");
+            swatch.set_data ("rail-hex", hex);
+            apply_swatch_css (swatch, hex);
+            if (group != null)
+                swatch.group = group;
+            else
+                group = swatch;
+            var captured = hex;
+            swatch.toggled.connect (() => {
+                if (this.updating_rail_swatches || !swatch.active)
+                    return;
+                this.settings.set_string ("account-rail-color", captured);
+                sync_rail_picker_preview ();
+            });
+            this.rail_swatch_box.append (swatch);
+        }
+
+        this.rail_picker_button = new Gtk.Button () {
+            tooltip_text = _("Choose a custom colour"),
+            valign = Gtk.Align.CENTER,
+            icon_name = "color-select-symbolic",
+        };
+        this.rail_picker_button.add_css_class ("circular");
+        this.rail_picker_button.add_css_class ("rail-swatch-picker");
+        this.rail_picker_button.clicked.connect (() => {
+            pick_rail_color.begin ();
+        });
+        this.rail_swatch_box.append (this.rail_picker_button);
+
+        row.add_suffix (this.rail_swatch_box);
+        return row;
+    }
+
+    private async void pick_rail_color () {
+        /* Own Gtk window (not Adw.Dialog): ColorChooserWidget textures work,
+         * and we can size to the palette vs editor natural requisition. */
+        var parent = this.host;
+        var dialog = new Gtk.ColorChooserDialog (_("Choose Colour"), parent) {
+            modal = true,
+            use_alpha = false,
+            resizable = false,
+        };
+
+        var initial = Gdk.RGBA ();
+        if (!initial.parse (this.settings.get_string ("account-rail-color")))
+            initial.parse ("#3584e4");
+        dialog.set_rgba (initial);
+
+        var ccw = find_color_chooser_widget (dialog);
+        if (ccw != null) {
+            ccw.notify["show-editor"].connect (() => {
+                Idle.add (() => {
+                    fit_color_chooser_dialog (dialog);
+                    return Source.REMOVE;
+                });
+            });
+        }
+
+        dialog.map.connect (() => {
+            fit_color_chooser_dialog (dialog);
+            Idle.add (() => {
+                fit_color_chooser_dialog (dialog);
+                return Source.REMOVE;
+            });
+        });
+
+        var response = yield run_color_chooser_async (dialog);
+        if (response == Gtk.ResponseType.OK) {
+            this.settings.set_string ("account-rail-color", rgba_to_hex (dialog.get_rgba ()));
+            if (this.rail_color_row.selected != 2)
+                this.rail_color_row.selected = 2;
+            sync_rail_swatches ();
+        }
+        dialog.destroy ();
+    }
+
+    private static Gtk.ColorChooserWidget? find_color_chooser_widget (Gtk.Widget widget) {
+        var chooser = widget as Gtk.ColorChooserWidget;
+        if (chooser != null)
+            return chooser;
+        for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ()) {
+            var found = find_color_chooser_widget (child);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
+    private static Gtk.ScrolledWindow? find_scrolled_window (Gtk.Widget widget) {
+        var scrolled = widget as Gtk.ScrolledWindow;
+        if (scrolled != null)
+            return scrolled;
+        for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ()) {
+            var found = find_scrolled_window (child);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
+    private static void fit_color_chooser_dialog (Gtk.ColorChooserDialog dialog) {
+        var ccw = find_color_chooser_widget (dialog);
+        var scrolled = find_scrolled_window (dialog);
+        if (ccw == null || scrolled == null)
+            return;
+
+        int nat_w, nat_h;
+        ccw.measure (Gtk.Orientation.HORIZONTAL, -1, null, out nat_w, null, null);
+        ccw.measure (Gtk.Orientation.VERTICAL, -1, null, out nat_h, null, null);
+
+        /* ColorChooserDialog wraps the widget in a ScrolledWindow with a low
+         * max-content height, so the editor view scrolls inside empty chrome
+         * instead of growing the window. Lift the clamp and size to content. */
+        scrolled.set_max_content_width (-1);
+        scrolled.set_max_content_height (-1);
+        scrolled.set_min_content_width (nat_w);
+        scrolled.set_min_content_height (nat_h);
+        scrolled.propagate_natural_width = true;
+        scrolled.propagate_natural_height = true;
+        scrolled.set_policy (Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER);
+
+        dialog.set_size_request (-1, -1);
+        dialog.queue_resize ();
+
+        int dlg_w, dlg_h;
+        dialog.measure (Gtk.Orientation.HORIZONTAL, -1, null, out dlg_w, null, null);
+        dialog.measure (Gtk.Orientation.VERTICAL, -1, null, out dlg_h, null, null);
+        dialog.set_default_size (dlg_w, dlg_h);
+        /* Mapped windows ignore default-size alone; pin then keep resizable=false. */
+        dialog.set_size_request (dlg_w, dlg_h);
+    }
+
+    private async int run_color_chooser_async (Gtk.ColorChooserDialog dialog) {
+        int response = Gtk.ResponseType.CANCEL;
+        SourceFunc resume = run_color_chooser_async.callback;
+        dialog.response.connect ((response_id) => {
+            response = response_id;
+            Idle.add ((owned) resume);
+        });
+        dialog.present ();
+        yield;
+        return response;
+    }
+
+    private void sync_rail_swatches () {
+        if (this.rail_swatch_box == null)
+            return;
+        this.updating_rail_swatches = true;
+        var current = normalize_hex (this.settings.get_string ("account-rail-color"));
+        var matched = false;
+        for (var child = this.rail_swatch_box.get_first_child (); child != null; child = child.get_next_sibling ()) {
+            var swatch = child as Gtk.ToggleButton;
+            if (swatch == null)
+                continue;
+            var hex = swatch.get_data<string> ("rail-hex");
+            if (hex == null)
+                continue;
+            var on = normalize_hex (hex) == current;
+            swatch.active = on;
+            if (on)
+                matched = true;
+        }
+        this.updating_rail_swatches = false;
+        sync_rail_picker_preview ();
+        if (!matched)
+            apply_swatch_css (this.rail_picker_button, current);
+    }
+
+    private void sync_rail_picker_preview () {
+        var current = normalize_hex (this.settings.get_string ("account-rail-color"));
+        var matched = false;
+        for (var child = this.rail_swatch_box.get_first_child (); child != null; child = child.get_next_sibling ()) {
+            var swatch = child as Gtk.ToggleButton;
+            if (swatch == null)
+                continue;
+            var hex = swatch.get_data<string> ("rail-hex");
+            if (hex != null && normalize_hex (hex) == current) {
+                matched = true;
+                break;
+            }
+        }
+        if (matched)
+            this.rail_picker_button.remove_css_class ("rail-swatch");
+        else {
+            this.rail_picker_button.add_css_class ("rail-swatch");
+            apply_swatch_css (this.rail_picker_button, current);
+        }
+    }
+
+    private static void apply_swatch_css (Gtk.Widget widget, string hex) {
+        var old_class = widget.get_data<string> ("rail-swatch-class");
+        if (old_class != null)
+            widget.remove_css_class (old_class);
+
+        var name = "rail-swatch-%s".printf (hex.replace ("#", ""));
+        widget.add_css_class (name);
+        widget.set_data ("rail-swatch-class", name);
+
+        var provider = widget.get_data<Gtk.CssProvider> ("rail-swatch-css");
+        if (provider == null) {
+            provider = new Gtk.CssProvider ();
+            widget.set_data ("rail-swatch-css", provider);
+            Gtk.StyleContext.add_provider_for_display (
+                Gdk.Display.get_default (),
+                provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
+            );
+        }
+        provider.load_from_string (
+            ".%s { --rail-swatch-color: %s; background: %s; }".printf (name, hex, hex)
+        );
+    }
+
+    private static string rgba_to_hex (Gdk.RGBA rgba) {
+        return "#%02x%02x%02x".printf (
+            (uint) (rgba.red * 255.0 + 0.5),
+            (uint) (rgba.green * 255.0 + 0.5),
+            (uint) (rgba.blue * 255.0 + 0.5)
+        );
+    }
+
+    private static string normalize_hex (string value) {
+        var text = value.strip ().down ();
+        if (!text.has_prefix ("#"))
+            text = "#" + text;
+        return text;
+    }
+
+    private static string accent_color_label (Adw.AccentColor accent) {
+        switch (accent) {
+            case Adw.AccentColor.BLUE:
+                return _("Blue");
+            case Adw.AccentColor.TEAL:
+                return _("Teal");
+            case Adw.AccentColor.GREEN:
+                return _("Green");
+            case Adw.AccentColor.YELLOW:
+                return _("Yellow");
+            case Adw.AccentColor.ORANGE:
+                return _("Orange");
+            case Adw.AccentColor.RED:
+                return _("Red");
+            case Adw.AccentColor.PINK:
+                return _("Pink");
+            case Adw.AccentColor.PURPLE:
+                return _("Purple");
+            case Adw.AccentColor.SLATE:
+                return _("Slate");
+            default:
+                return _("Accent");
         }
     }
 
@@ -452,7 +913,7 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
     }
 
     private void update_cache_subtitle () {
-        var text = _("Applies to all folders (Inbox, Archive, Sent, Trash, custom, …). Older bodies are trimmed at startup; headers stay for the message list.");
+        var text = _("Keep complete emails on disk for the selected period for fast browsing and search indexing. Needs disk space.");
         if (this.cache_days_row.selected == 3) {
             this.cache_days_row.subtitle = "%s\n%s".printf (
                 text,
@@ -466,24 +927,36 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
     }
 
     private void fill_mail_accounts () {
+        clear_account_drop_highlight ();
         for (uint i = 0; i < this.account_rows.length; i++)
             this.accounts_group.remove (this.account_rows[i]);
         this.account_rows = new GenericArray<Adw.ActionRow> ();
 
-        for (uint i = 0; i < this.store.items.get_n_items (); i++) {
-            var account = this.store.items.get_item (i) as Account;
-            if (account == null || !account.has_mail || account.kind == AccountKind.LOCAL)
-                continue;
+        var accounts = collect_preference_accounts (true);
+        Account.sort_for_display (accounts, this.settings.get_strv ("account-order"));
 
+        for (uint i = 0; i < accounts.length; i++) {
+            var account = accounts[i];
             var row = new Adw.ActionRow () {
                 title = account.display_name,
                 subtitle = account.email != null && account.email.length > 0
                     ? account.email
                     : account.kind.label (),
             };
+            row.set_data ("order-key", account.order_key);
+
             var icon = Utils.account_brand_image (account, 28);
             icon.valign = Gtk.Align.CENTER;
+            /* Prefixes pack right-to-left: add brand first, handle last → handle leftmost. */
             row.add_prefix (icon);
+
+            var handle = new Gtk.Image.from_icon_name ("list-drag-handle-symbolic") {
+                valign = Gtk.Align.CENTER,
+                tooltip_text = _("Drag to reorder"),
+            };
+            handle.add_css_class ("dim-label");
+            handle.add_css_class ("account-drag-handle");
+            row.add_prefix (handle);
 
             var edit = new Gtk.Button.with_label (_("Edit")) {
                 valign = Gtk.Align.CENTER,
@@ -508,18 +981,188 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
 
             row.add_suffix (edit);
             row.add_suffix (firms);
-            this.accounts_group.add (row);
+            setup_account_row_dnd (row, handle, account);
+            add_prefs_row (this.accounts_group, row);
             this.account_rows.add (row);
         }
     }
 
-    private void fill_cache_accounts () {
-        refresh_total_row ();
+    private static Gtk.Widget build_account_drag_preview (Account account) {
+        var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10) {
+            valign = Gtk.Align.CENTER,
+        };
+        box.add_css_class ("account-drag-preview");
+
+        var icon = Utils.account_brand_image (account, 28);
+        icon.valign = Gtk.Align.CENTER;
+        box.append (icon);
+
+        var labels = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
+            valign = Gtk.Align.CENTER,
+            hexpand = true,
+        };
+        var title = new Gtk.Label (account.display_name) {
+            xalign = 0f,
+            ellipsize = Pango.EllipsizeMode.END,
+            max_width_chars = 28,
+        };
+        title.add_css_class ("heading");
+        var subtitle_text = account.email != null && account.email.length > 0
+            ? account.email
+            : account.kind.label ();
+        var subtitle = new Gtk.Label (subtitle_text) {
+            xalign = 0f,
+            ellipsize = Pango.EllipsizeMode.END,
+            max_width_chars = 28,
+        };
+        subtitle.add_css_class ("caption");
+        subtitle.add_css_class ("dim-label");
+        labels.append (title);
+        labels.append (subtitle);
+        box.append (labels);
+        return box;
+    }
+
+    private GenericArray<Account> collect_preference_accounts (bool mail_only) {
+        var accounts = new GenericArray<Account> ();
         for (uint i = 0; i < this.store.items.get_n_items (); i++) {
             var account = this.store.items.get_item (i) as Account;
-            if (account == null || account.kind == AccountKind.LOCAL || account.source_uid == null)
+            if (account == null || account.kind == AccountKind.LOCAL)
                 continue;
+            if (mail_only && !account.has_mail)
+                continue;
+            if (!mail_only && account.source_uid == null)
+                continue;
+            accounts.add (account);
+        }
+        return accounts;
+    }
 
+    private void setup_account_row_dnd (Adw.ActionRow row, Gtk.Widget handle, Account account) {
+        var drag = new Gtk.DragSource () {
+            actions = Gdk.DragAction.MOVE,
+        };
+        drag.prepare.connect ((x, y) => {
+            var key = row.get_data<string> ("order-key");
+            if (key == null || key.length == 0)
+                return null;
+            return new Gdk.ContentProvider.for_value (key);
+        });
+        drag.drag_begin.connect ((gdk_drag) => {
+            row.add_css_class ("account-row-dragging");
+            /* Compact chip under the cursor — full-row WidgetPaintable was
+             * centered on the pointer and spilled out of the dialog. */
+            var preview = build_account_drag_preview (account);
+            var drag_icon = new Gtk.DragIcon.get_for_drag (gdk_drag);
+            drag_icon.child = preview;
+        });
+        drag.drag_end.connect ((gdk_drag, delete_data) => {
+            row.remove_css_class ("account-row-dragging");
+            clear_account_drop_highlight ();
+        });
+        drag.drag_cancel.connect ((gdk_drag, reason) => {
+            row.remove_css_class ("account-row-dragging");
+            clear_account_drop_highlight ();
+            return false;
+        });
+        handle.add_controller (drag);
+        handle.cursor = new Gdk.Cursor.from_name ("grab", null);
+
+        var drop = new Gtk.DropTarget (typeof (string), Gdk.DragAction.MOVE);
+        drop.accept.connect ((gdk_drop) => {
+            return this.account_rows.length > 1;
+        });
+        drop.enter.connect ((x, y) => {
+            update_account_drop_highlight (row, y);
+            return Gdk.DragAction.MOVE;
+        });
+        drop.motion.connect ((x, y) => {
+            update_account_drop_highlight (row, y);
+            return Gdk.DragAction.MOVE;
+        });
+        drop.leave.connect (() => {
+            clear_account_drop_highlight ();
+        });
+        drop.drop.connect ((value, x, y) => {
+            clear_account_drop_highlight ();
+            var dragged = value.get_string ();
+            var target = row.get_data<string> ("order-key");
+            if (dragged == null || target == null || dragged == target)
+                return false;
+            return apply_account_reorder (dragged, target, y < row.get_height () / 2.0);
+        });
+        row.add_controller (drop);
+    }
+
+    private void update_account_drop_highlight (Adw.ActionRow row, double y) {
+        clear_account_drop_highlight ();
+        this.account_drop_highlight = row;
+        if (y < row.get_height () / 2.0)
+            row.add_css_class ("account-drop-above");
+        else
+            row.add_css_class ("account-drop-below");
+    }
+
+    private void clear_account_drop_highlight () {
+        if (this.account_drop_highlight == null)
+            return;
+        this.account_drop_highlight.remove_css_class ("account-drop-above");
+        this.account_drop_highlight.remove_css_class ("account-drop-below");
+        this.account_drop_highlight = null;
+    }
+
+    private bool apply_account_reorder (string dragged_key, string target_key, bool before) {
+        var keys = new GenericArray<string> ();
+        for (uint i = 0; i < this.account_rows.length; i++) {
+            var key = this.account_rows[i].get_data<string> ("order-key");
+            if (key != null && key.length > 0)
+                keys.add (key);
+        }
+
+        int from = -1;
+        int to = -1;
+        for (uint i = 0; i < keys.length; i++) {
+            if (keys[i] == dragged_key)
+                from = (int) i;
+            if (keys[i] == target_key)
+                to = (int) i;
+        }
+        if (from < 0 || to < 0 || from == to)
+            return false;
+
+        keys.remove_index (from);
+        if (from < to)
+            to--;
+        int insert = before ? to : to + 1;
+        if (insert < 0)
+            insert = 0;
+        if (insert > (int) keys.length)
+            insert = (int) keys.length;
+        keys.insert (insert, dragged_key);
+
+        var order = new string[keys.length];
+        for (uint i = 0; i < keys.length; i++)
+            order[i] = keys[i];
+
+        this.updating_account_order = true;
+        this.settings.set_strv ("account-order", order);
+        this.updating_account_order = false;
+        fill_mail_accounts ();
+        fill_cache_accounts ();
+        return true;
+    }
+
+    private void fill_cache_accounts () {
+        refresh_total_row ();
+        for (uint i = 0; i < this.cache_account_rows.length; i++)
+            this.cache_group.remove (this.cache_account_rows[i]);
+        this.cache_account_rows = new GenericArray<Adw.ActionRow> ();
+
+        var accounts = collect_preference_accounts (false);
+        Account.sort_for_display (accounts, this.settings.get_strv ("account-order"));
+
+        for (uint i = 0; i < accounts.length; i++) {
+            var account = accounts[i];
             var row = new Adw.ActionRow () {
                 title = account.display_name,
                 subtitle = cache_subtitle (account),
@@ -535,7 +1178,8 @@ public class Mail.PreferencesDialog : Adw.PreferencesDialog {
                 confirm_reset.begin (captured, captured_row);
             });
             row.add_suffix (button);
-            this.cache_group.add (row);
+            add_prefs_row (this.cache_group, row);
+            this.cache_account_rows.add (row);
         }
     }
 

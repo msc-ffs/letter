@@ -236,6 +236,16 @@ public class Mail.ContactStore : Object {
         remember_recipient_list (recipients, account, new DateTime.now_utc ().to_unix (), false);
     }
 
+    /** Drop a recent/harvested address from compose suggestions (not address books). */
+    public bool forget_collected (string? email) {
+        var key = Utils.sanitize_recipient_text (email).down ();
+        if (key.length == 0 || !this.collected.contains (key))
+            return false;
+        this.collected.remove (key);
+        queue_save ();
+        return true;
+    }
+
     /* Seed from Sent header rows already in RAM/disk — no MIME / Graph. */
     public void harvest_sent_messages (Account account, GenericArray<Message> messages) {
         var key = account_key (account);
@@ -250,9 +260,11 @@ public class Mail.ContactStore : Object {
             var message = messages[i];
             if (!message.outgoing)
                 continue;
-            if (remember_header_field (message.to, account, message.date, true))
+            /* Prefer raw To/Cc (with addresses). message.to/cc are display-only
+             * name lists — parsing those glued every chip into one “name”. */
+            if (remember_header_field (message.to_header ?? "", account, message.date, true))
                 changed = true;
-            if (remember_header_field (message.cc, account, message.date, true))
+            if (remember_header_field (message.cc_header ?? "", account, message.date, true))
                 changed = true;
         }
         if (changed)
@@ -281,7 +293,10 @@ public class Mail.ContactStore : Object {
         int64 date,
         bool harvest
     ) {
-        if (raw == null || raw.length == 0)
+        if (raw == null || raw.strip ().length == 0)
+            return false;
+        /* Display-only lists (no mailbox) must never be harvested. */
+        if (!raw.contains ("@"))
             return false;
         var recipients = Utils.parse_recipient_list (raw);
         return remember_recipient_list (recipients, account, date, harvest);
@@ -297,9 +312,12 @@ public class Mail.ContactStore : Object {
         var changed = false;
         for (uint i = 0; i < recipients.length; i++) {
             var email = Utils.sanitize_recipient_text (recipients[i].email).down ();
-            if (email.length == 0 || !email.contains ("@"))
+            if (!usable_collected_email (email))
                 continue;
-            var name = Utils.sanitize_recipient_text (recipients[i].name);
+            var name = sanitize_collected_name (
+                Utils.sanitize_recipient_text (recipients[i].name),
+                email
+            );
             var entry = this.collected.get (email);
             if (entry == null) {
                 entry = new Collected ();
@@ -307,10 +325,12 @@ public class Mail.ContactStore : Object {
                 entry.uses = 0;
                 this.collected.set (email, entry);
             }
-            if (name.length > 0 && (entry.name.length == 0 || entry.name.contains ("@")))
-                entry.name = name;
-            else if (name.length > 0 && entry.name != name)
-                entry.name = name;
+            if (name.length > 0 && name_fits_email (name, email)) {
+                if (entry.name.length == 0 || !name_fits_email (entry.name, email))
+                    entry.name = name;
+                else if (entry.name != name && name_fits_email (name, email))
+                    entry.name = name;
+            }
             if (date > entry.last_used)
                 entry.last_used = date;
             if (harvest) {
@@ -327,6 +347,82 @@ public class Mail.ContactStore : Object {
         if (changed && !harvest)
             queue_save ();
         return changed;
+    }
+
+    private static bool usable_collected_email (string email) {
+        if (email.length == 0 || !email.contains ("@"))
+            return false;
+        if (email.contains (" ") || email.contains (",") || email.contains (";"))
+            return false;
+        var at = email.index_of_char ('@');
+        if (at <= 0 || at >= email.length - 1)
+            return false;
+        if (email.index_of_char ('@', at + 1) >= 0)
+            return false;
+        return email.substring (at + 1).contains (".");
+    }
+
+    /* "Last, First" is fine; "Ada Ada, Bob Bob, …" is a glued To: display list. */
+    private static bool looks_like_merged_people_name (string name) {
+        if (name.contains ("@"))
+            return true;
+        var parts = name.split (",");
+        if (parts.length < 2)
+            return false;
+        int person_like = 0;
+        foreach (var part in parts) {
+            var token = part.strip ();
+            if (token.length == 0)
+                continue;
+            if (token.contains (" "))
+                person_like++;
+        }
+        return person_like >= 2;
+    }
+
+    /* Drop names that clearly do not belong to this mailbox (harvest glued
+     * the wrong display name onto someone else's address). */
+    private static bool name_fits_email (string name, string email) {
+        if (name.length == 0)
+            return true;
+        if (looks_like_merged_people_name (name))
+            return false;
+        var at = email.index_of_char ('@');
+        if (at <= 0)
+            return false;
+        var local = email.substring (0, at).down ();
+        var local_spaced = local
+            .replace (".", " ")
+            .replace ("_", " ")
+            .replace ("-", " ");
+        var local_compact = local
+            .replace (".", "")
+            .replace ("_", "")
+            .replace ("-", "");
+        var name_d = name.down ();
+        foreach (var raw_token in name_d.split (" ")) {
+            var token = raw_token.strip ();
+            if (token.length < 3)
+                continue;
+            if (local_spaced.contains (token) || local_compact.contains (token))
+                return true;
+        }
+        foreach (var raw_token in local_spaced.split (" ")) {
+            var token = raw_token.strip ();
+            if (token.length < 3)
+                continue;
+            if (name_d.contains (token))
+                return true;
+        }
+        return false;
+    }
+
+    private static string sanitize_collected_name (string name, string email = "") {
+        if (name.length == 0 || looks_like_merged_people_name (name))
+            return "";
+        if (email.length > 0 && !name_fits_email (name, email))
+            return "";
+        return name;
     }
 
     private async void ensure_books (Cancellable? cancellable) {
@@ -462,7 +558,10 @@ public class Mail.ContactStore : Object {
                 return;
             if (seen.contains (key))
                 return;
-            if (needle.length > 0 && !matches (entry.name, entry.email, needle))
+            /* History is keyed by mailbox: match the address (and a name only
+             * when it actually belongs to that address). Never surface
+             * “Lupo Giovanni” glued onto advertising@…. */
+            if (needle.length > 0 && !matches_collected (entry.name, entry.email, needle))
                 return;
             seen.set (key, 1);
             hits.add (new ContactHit () {
@@ -544,6 +643,18 @@ public class Mail.ContactStore : Object {
         return hay_name.down ().contains (needle) || hay_email.contains (needle);
     }
 
+    private static bool matches_collected (string? name, string? email, string needle) {
+        if (needle.length == 0)
+            return true;
+        var hay_email = (email ?? "").down ();
+        if (hay_email.contains (needle))
+            return true;
+        var hay_name = name ?? "";
+        if (hay_name.down ().contains (needle) && name_fits_email (hay_name, hay_email))
+            return true;
+        return false;
+    }
+
     private int compare_hits (ContactHit a, ContactHit b, string needle) {
         int sa = score (a, needle);
         int sb = score (b, needle);
@@ -573,14 +684,22 @@ public class Mail.ContactStore : Object {
 
         var name = hit.name.down ();
         var email = hit.email.down ();
-        if (email.has_prefix (needle))
+        var at = email.index_of_char ('@');
+        var local = at > 0 ? email.substring (0, at) : email;
+        /* Mailbox match always outranks a display-name hit — “lupo” must
+         * prefer g.lupo@… over an unrelated address that inherited that name. */
+        if (local.has_prefix (needle) || email.has_prefix (needle))
+            return 500 + points;
+        if (local.contains (needle) || email.contains (needle))
             return 400 + points;
-        if (name.has_prefix (needle))
-            return 300 + points;
-        if (email.contains (needle))
+        if (hit.from_book && name.has_prefix (needle))
             return 200 + points;
+        if (hit.from_book && name.contains (needle))
+            return 120 + points;
+        if (name.has_prefix (needle))
+            return 80 + points;
         if (name.contains (needle))
-            return 100 + points;
+            return 40 + points;
         return points;
     }
 
@@ -635,21 +754,32 @@ public class Mail.ContactStore : Object {
             return;
         }
 
+        var cleaned = false;
         foreach (var line in contents.split ("\n")) {
             if (line.length == 0 || line.has_prefix ("#"))
                 continue;
             var parts = line.split ("\t", 5);
-            if (parts.length < 1 || parts[0].length == 0 || !parts[0].contains ("@"))
+            if (parts.length < 1 || parts[0].length == 0)
                 continue;
+            var email = parts[0].down ();
+            if (!usable_collected_email (email)) {
+                cleaned = true;
+                continue;
+            }
             var entry = new Collected ();
-            entry.email = parts[0].down ();
-            entry.name = parts.length > 1 ? unescape_field (parts[1]) : "";
+            entry.email = email;
+            var name = parts.length > 1 ? unescape_field (parts[1]) : "";
+            entry.name = sanitize_collected_name (name, email);
+            if (name.length > 0 && entry.name.length == 0)
+                cleaned = true;
             entry.last_used = parts.length > 2 ? int64.parse (parts[2]) : 0;
             entry.uses = parts.length > 3 ? int.parse (parts[3]) : 1;
             if (parts.length > 4 && parts[4].length > 0)
                 entry.account_key = parts[4];
             this.collected.set (entry.email, entry);
         }
+        if (cleaned)
+            queue_save ();
     }
 
     private void queue_save () {

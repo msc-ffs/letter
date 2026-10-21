@@ -1,6 +1,9 @@
 # Letter
 
 [![Validate](https://github.com/stalvatero/letter/actions/workflows/ci.yml/badge.svg)](https://github.com/stalvatero/letter/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/stalvatero/letter?label=release)](https://github.com/stalvatero/letter/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/stalvatero/letter/total?label=downloads)](https://github.com/stalvatero/letter/releases)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](COPYING)
 
 Letter is a GTK 4 and libadwaita email client for the GNOME desktop. It sits next to Calendar and Contacts and uses the same identities: **GNOME Online Accounts** for login, **Evolution Data Server** and Camel for mail.
 
@@ -118,13 +121,20 @@ Tip: Use the **Microsoft 365** (Graph) account type, not classic Exchange Web Se
 
 For the full experience, **Hunspell** and **Sushi** are recommended. Hunspell (package name `hunspell` and `hunspell-en_us` or `hunspell-it` or `hunspell-YOUR_LANG`) spell-checks while you compose, so install it with a dictionary for your language. Sushi (package name `sushi` or `gnome-sushi`, check your distro) previews an attachment in place. Letter still composes and sends mail when they are not installed: spell check stays off, and an attachment opens in the default application.
 
+## Known issues
+
+These are limitations of the current stack (GNOME Online Accounts, Evolution Data Server, Camel, and distro library packaging). They are tracked here so they are not mistaken for Letter bugs. They are not fixable in Letter proper until the planned **Letter Engine** (and related Identity work) owns mail and contacts end to end.
+
+- **Microsoft 365 Global Address List (GAL)** — Organisation directory search and autocomplete depend on how Evolution Data Server and Online Accounts expose Exchange / Graph address books. Gaps, empty results, or incomplete GAL behaviour come from that layer, not from Letter’s UI. Letter already prefers the composing account’s books and honours EDS autocomplete flags where they exist; a full, reliable GAL experience needs the Engine.
+- **No `.deb` / `.rpm` (or similar) packages** — Distros ship different versions of WebKit, EDS, Camel, and related libraries. Linking against each system’s stack reintroduces bugs that Letter has already patched or pinned inside the Flatpak. Packaging per distribution would look like Letter regressions when the fault is the host libraries. Flatpak remains the supported install path until the Engine reduces that dependency surface.
+
 ## Install
 
 Download the Flatpak from [Releases](https://github.com/stalvatero/letter/releases). It needs GNOME Platform **50** from Flathub.
 
 ```sh
 flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install --user ./Letter-*-x86_64.flatpak
+flatpak install --user ./Letter-*-x86_64.flatpak # change the * with the number of version downloaded
 ```
 
 Add an account in **Settings → Online Accounts**, then open Letter.

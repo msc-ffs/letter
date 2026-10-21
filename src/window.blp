@@ -74,49 +74,9 @@ template $MailWindow: Adw.ApplicationWindow {
           "account-rail",
         ]
 
-        /* Same height as the account header; spacers keep the + centered
-         * at the same visual size as the account icons below. */
-        Gtk.Box account_rail_add_slot {
-          orientation: vertical;
-          hexpand: true;
-          vexpand: false;
-          valign: fill;
-          halign: fill;
-
-          styles [
-            "account-rail-add-slot",
-          ]
-
-          Gtk.Box {
-            vexpand: true;
-            hexpand: true;
-          }
-
-          Button account_rail_add {
-            icon-name: "list-add-symbolic";
-            tooltip-text: _("Add Account");
-            action-name: "app.online-accounts";
-            hexpand: false;
-            vexpand: false;
-            halign: center;
-            valign: center;
-
-            styles [
-              "flat",
-              "account-rail-icon",
-              "account-rail-add",
-            ]
-          }
-
-          Gtk.Box {
-            vexpand: true;
-            hexpand: true;
-          }
-        }
-
         Gtk.Box account_rail_list {
           orientation: vertical;
-          spacing: 0;
+          spacing: 2;
           hexpand: true;
           vexpand: true;
           halign: fill;
@@ -246,7 +206,7 @@ template $MailWindow: Adw.ApplicationWindow {
               child: Adw.StatusPage no_folders_page {
                 icon-name: "folder-symbolic";
                 title: _("Select an Account");
-                description: _("Choose an account in the sidebar to load its folders.");
+                description: _("Choose an account from the rail to load its folders.");
                 valign: center;
               };
             };

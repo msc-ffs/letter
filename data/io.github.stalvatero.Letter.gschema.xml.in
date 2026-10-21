@@ -51,20 +51,35 @@
       <summary>Application theme</summary>
       <description>Application appearance: follow the system, light, or dark.</description>
     </key>
+    <key name="account-rail-enabled" type="b">
+      <default>true</default>
+      <summary>Enable accounts rail</summary>
+      <description>Whether the account switcher rail is shown.</description>
+    </key>
     <key name="account-rail" type="s">
       <choices>
         <choice value="default"/>
         <choice value="theme"/>
-        <choice value="hide"/>
+        <choice value="custom"/>
       </choices>
       <default>'default'</default>
-      <summary>Accounts rail</summary>
-      <description>Accounts rail style: accent colour (default), match the window/header chrome, or hide the rail.</description>
+      <summary>Accounts rail colour</summary>
+      <description>Accounts rail colour: system accent (default), follow the window theme, or a custom colour.</description>
+    </key>
+    <key name="account-rail-color" type="s">
+      <default>'#3584e4'</default>
+      <summary>Custom accounts rail colour</summary>
+      <description>Hex colour (#RRGGBB) used when the accounts rail colour mode is custom.</description>
     </key>
     <key name="account-avatars" type="b">
       <default>false</default>
       <summary>Account pictures</summary>
       <description>Show profile pictures or initials in the accounts rail.</description>
+    </key>
+    <key name="account-order" type="as">
+      <default>[]</default>
+      <summary>Account display order</summary>
+      <description>Stable account ids (GOA / source UID) in the order shown in the accounts rail and Preferences. Empty means alphabetical.</description>
     </key>
     <key name="reader-zoom" type="d">
       <default>1.0</default>

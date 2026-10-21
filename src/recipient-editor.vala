@@ -38,6 +38,8 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
     }
 
     private class SuggestRow : Gtk.ListBoxRow {
+        public signal void forget_requested (ContactHit hit);
+
         public ContactHit hit;
 
         public SuggestRow (ContactHit hit) {
@@ -88,6 +90,21 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
                 valign = Gtk.Align.CENTER,
             });
             box.append (texts);
+
+            if (!hit.from_book) {
+                var forget = new Gtk.Button.from_icon_name ("window-close-symbolic") {
+                    valign = Gtk.Align.CENTER,
+                    tooltip_text = _("Remove from suggestions"),
+                };
+                forget.add_css_class ("flat");
+                forget.add_css_class ("circular");
+                forget.add_css_class ("compose-suggest-forget");
+                forget.clicked.connect (() => {
+                    forget_requested (hit);
+                });
+                box.append (forget);
+            }
+
             this.child = box;
             this.can_focus = false;
             this.focusable = false;
@@ -531,6 +548,8 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
     private void on_input_text () {
         maybe_commit_separator ();
         queue_suggest ();
+        if (suggest_is_open ())
+            queue_point_suggest ();
     }
 
     private bool suggest_is_open () {
@@ -607,18 +626,34 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
         }
 
         var key = emails.str;
-        if (key == this.suggest_shown_key && this.suggest_popover.visible)
+        if (key == this.suggest_shown_key && this.suggest_popover.visible) {
+            queue_point_suggest ();
             return;
+        }
 
         this.suggest_shown_key = key;
         this.suggest_list.remove_all ();
-        for (uint i = 0; i < rows.length; i++)
-            this.suggest_list.append (new SuggestRow (rows[i]));
+        for (uint i = 0; i < rows.length; i++) {
+            var row = new SuggestRow (rows[i]);
+            row.forget_requested.connect (on_forget_suggest);
+            this.suggest_list.append (row);
+        }
 
         this.suggest_list.select_row (this.suggest_list.get_row_at_index (0));
         size_suggest (shown);
         if (!this.suggest_popover.visible)
             this.suggest_popover.popup ();
+        point_suggest ();
+        queue_point_suggest ();
+        keep_entry_focus ();
+    }
+
+    private void on_forget_suggest (ContactHit hit) {
+        if (this.contacts == null || hit.from_book)
+            return;
+        this.contacts.forget_collected (hit.email);
+        this.suggest_shown_key = "";
+        queue_suggest (true);
         keep_entry_focus ();
     }
 
@@ -648,9 +683,9 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
         this.suggest_scrolled.vscrollbar_policy = scroll
             ? Gtk.PolicyType.AUTOMATIC
             : Gtk.PolicyType.NEVER;
-        /* Prefer content-size on the scrolled child; width/height_request on
-         * the popover during WrapBox layout can re-enter allocate. */
-        this.suggest_popover.width_request = -1;
+        /* Match search-field: request the content width on the popover so
+         * pointing_to and the laid-out bubble share the same measure. */
+        this.suggest_popover.width_request = width + 12;
         this.suggest_popover.height_request = -1;
         queue_point_suggest ();
     }
@@ -669,22 +704,24 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
         if (this.suggest_popover == null)
             return;
 
-        var rect = Gdk.Rectangle () {
+        /* Popover BOTTOM centers on pointing_to. Start at the left edge of the
+         * Gtk.Text (first letter of the needle). Pointing width must be the
+         * *content* width + CSS padding — not popover.get_width() (shadow) and
+         * not input.get_width() (grows with each letter). */
+        var content_w = this.suggest_scrolled.get_width ();
+        if (content_w < 1)
+            content_w = this.suggest_sized_width > 0
+                ? this.suggest_sized_width
+                : SUGGEST_MIN_WIDTH;
+        var pointing_w = content_w + 12; /* .compose-suggest-popover > contents padding */
+
+        this.suggest_popover.set_offset (0, 0);
+        this.suggest_popover.set_pointing_to (Gdk.Rectangle () {
             x = 0,
             y = 0,
-            width = 1,
+            width = pointing_w,
             height = int.max (1, this.input.get_height ()),
-        };
-        Graphene.Rect strong;
-        Graphene.Rect weak;
-        this.input.compute_cursor_extents (0, out strong, out weak);
-        if (strong.size.height > 0.5f) {
-            rect.x = (int) strong.origin.x;
-            rect.y = (int) strong.origin.y;
-            rect.width = 1;
-            rect.height = int.max (1, (int) strong.size.height);
-        }
-        this.suggest_popover.set_pointing_to (rect);
+        });
     }
 
     private static void set_scrolled_content_size (Gtk.ScrolledWindow scrolled, int width, int height) {
@@ -764,6 +801,9 @@ public class Mail.RecipientEditor : Adw.PreferencesRow {
             child = this.suggest_scrolled,
         };
         this.suggest_popover.add_css_class ("compose-suggest-popover");
+        /* Same pattern as search-field: parent = input, pointing_to from (0,0).
+         * Do not use input.get_width() (grows with typing) or popover.get_width()
+         * (includes shadow) — those shift the centered popover to the right. */
         this.suggest_popover.set_parent (this.input);
 
         var popover_keys = new Gtk.EventControllerKey ();

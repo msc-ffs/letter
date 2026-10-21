@@ -2019,6 +2019,8 @@ public class Mail.MailSession : Camel.Session {
         var to = Utils.display_address_list (to_raw);
         var cc = Utils.display_address_list (cc_raw);
         var list_address = outgoing && to.length > 0 ? to : from;
+        var to_header = to_raw != null && to_raw.strip ().length > 0 ? to_raw.strip () : null;
+        var cc_header = cc_raw != null && cc_raw.strip ().length > 0 ? cc_raw.strip () : null;
         var blob = new StringBuilder ();
         Utils.append_search_part (blob, subject);
         Utils.append_search_part (blob, from_raw);
@@ -2049,6 +2051,8 @@ public class Mail.MailSession : Camel.Session {
             from = from,
             to = to,
             cc = cc,
+            to_header = to_header,
+            cc_header = cc_header,
             from_blob = from_blob.str,
             to_blob = to_blob.str,
             list_address = list_address,
@@ -2095,6 +2099,8 @@ public class Mail.MailSession : Camel.Session {
         var from_display = from.length > 0 ? Utils.display_address (from) : from;
         var to_display = Utils.display_address_list (to);
         var cc_display = Utils.display_address_list (cc);
+        var to_header = to.length > 0 ? to : null;
+        var cc_header = cc.length > 0 ? cc : null;
         var blob = new StringBuilder ();
         Utils.append_search_part (blob, subject);
         Utils.append_search_part (blob, from);
@@ -2115,6 +2121,8 @@ public class Mail.MailSession : Camel.Session {
             from = from_display,
             to = to_display,
             cc = cc_display,
+            to_header = to_header,
+            cc_header = cc_header,
             from_blob = from_blob.str,
             to_blob = to_blob.str,
             list_address = to_display,

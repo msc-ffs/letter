@@ -6,6 +6,10 @@ public class Mail.Window : Adw.ApplicationWindow {
     }
     private const int ACCOUNT_PANE_MIN = 220;
     private const int ACCOUNT_PANE_MAX = 320;
+    /* Online Accounts list pane (between rail and folders). Disabled while we
+     * gather feedback — account switch stays on the rail; add accounts from
+     * Preferences. Set true to restore the pane + header toggle. */
+    private const bool ACCOUNT_LIST_PANE_ENABLED = false;
     /* Adw.OverlaySplitView: width = clamp(fraction×view, min, max).
      * At the 920sp collapse the split is ~870px wide (window − rail); with
      * 0.21 that lands near 180 — the usable minimum before hide. */
@@ -34,10 +38,6 @@ public class Mail.Window : Adw.ApplicationWindow {
     private unowned Adw.OverlaySplitView folder_split;
     [GtkChild]
     private unowned Gtk.Box account_rail;
-    [GtkChild]
-    private unowned Gtk.Box account_rail_add_slot;
-    [GtkChild]
-    private unowned Gtk.Button account_rail_add;
     [GtkChild]
     private unowned Gtk.Box account_rail_list;
     [GtkChild]
@@ -127,6 +127,7 @@ public class Mail.Window : Adw.ApplicationWindow {
     private Settings settings;
     private AccountAvatars account_avatars = new AccountAvatars ();
     private uint account_rail_generation;
+    private Gtk.CssProvider? account_rail_css;
     private MessageDragPayload? active_message_drag;
     private Gtk.ListBox account_list;
     private Gtk.ListBox folder_list;
@@ -239,7 +240,6 @@ public class Mail.Window : Adw.ApplicationWindow {
     private PendingTransferUndo? pending_transfer_undo;
     private HashTable<string, uint8> collapsed_folders;
     private Gtk.SizeGroup account_header_sizes;
-    private Gtk.SizeGroup account_row_sizes;
     private uint sync_status_token;
     /* Foreground lines (send, search, open) own the bar. Startup sync and
      * scheduled sync keep a line underneath and show it again when the
@@ -349,20 +349,27 @@ public class Mail.Window : Adw.ApplicationWindow {
         maximized = this.settings.get_boolean ("window-maximized");
         height_request = WINDOW_MIN_HEIGHT;
         update_window_width_request ();
-        this.sidebar_button.active = this.settings.get_boolean ("show-folder-sidebar");
-        this.sidebar_button.toggled.connect (() => {
+        if (ACCOUNT_LIST_PANE_ENABLED) {
+            this.sidebar_button.active = this.settings.get_boolean ("show-folder-sidebar");
+            this.sidebar_button.toggled.connect (() => {
+                apply_account_sidebar (this.sidebar_button.active);
+            });
+            this.folder_split.notify["show-sidebar"].connect (() => {
+                if (this.sidebar_button.active != this.folder_split.show_sidebar)
+                    this.sidebar_button.active = this.folder_split.show_sidebar;
+            });
+            this.folder_split.notify["collapsed"].connect (on_folder_split_collapsed);
             apply_account_sidebar (this.sidebar_button.active);
-        });
-        this.folder_split.notify["show-sidebar"].connect (() => {
-            if (this.sidebar_button.active != this.folder_split.show_sidebar)
-                this.sidebar_button.active = this.folder_split.show_sidebar;
-        });
-        this.folder_split.notify["collapsed"].connect (on_folder_split_collapsed);
-        apply_account_sidebar (this.sidebar_button.active);
-        if (this.folder_split.collapsed)
-            on_folder_split_collapsed ();
+            if (this.folder_split.collapsed)
+                on_folder_split_collapsed ();
+        } else {
+            apply_account_sidebar (false);
+        }
+        this.settings.changed["account-rail-enabled"].connect (apply_account_rail);
         this.settings.changed["account-rail"].connect (apply_account_rail);
+        this.settings.changed["account-rail-color"].connect (apply_account_rail);
         this.settings.changed["account-avatars"].connect (fill_account_rail);
+        this.settings.changed["account-order"].connect (on_accounts_changed);
         apply_account_rail ();
         this.folder_pane_button.toggled.connect (on_folder_pane_toggled);
         this.folder_pane_split.notify["show-sidebar"].connect (on_folder_pane_show_sidebar);
@@ -400,7 +407,6 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.optimistic_dest_headers = new HashTable<string, GenericArray<Message>> (str_hash, str_equal);
         this.collapsed_folders = new HashTable<string, uint8> (str_hash, str_equal);
         this.account_header_sizes = new Gtk.SizeGroup (Gtk.SizeGroupMode.VERTICAL);
-        this.account_row_sizes = new Gtk.SizeGroup (Gtk.SizeGroupMode.VERTICAL);
         sync_toolbar_header_sizes ();
         foreach (var key in this.settings.get_strv ("collapsed-folders")) {
             if (key.length > 0)
@@ -690,21 +696,20 @@ public class Mail.Window : Adw.ApplicationWindow {
                 continue;
             accounts.add (account);
         }
-        accounts.sort ((a, b) => {
-            if (a.has_mail != b.has_mail)
-                return a.has_mail ? -1 : 1;
-            return a.display_name.collate (b.display_name);
-        });
+        Account.sort_for_display (accounts, this.settings.get_strv ("account-order"));
         for (uint i = 0; i < accounts.length; i++)
             this.account_list.append (new AccountRow (accounts[i]));
 
         fill_account_rail ();
 
         if (this.account_list.get_row_at_index (0) == null) {
-            this.sidebar_bin.child = this.no_accounts_page;
             if (store.error_message != null)
                 this.no_accounts_page.description = Markup.escape_text (store.error_message);
-        } else {
+            if (ACCOUNT_LIST_PANE_ENABLED)
+                this.sidebar_bin.child = this.no_accounts_page;
+            else
+                this.folder_bin.child = this.no_accounts_page;
+        } else if (ACCOUNT_LIST_PANE_ENABLED) {
             this.sidebar_bin.child = this.account_scrolled;
         }
 
@@ -2973,18 +2978,10 @@ public class Mail.Window : Adw.ApplicationWindow {
             if (this.selected_account != null && accounts_are_same (this.selected_account, account))
                 button.active = true;
 
-            var slot = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
-                hexpand = true,
-                vexpand = false,
-                valign = Gtk.Align.FILL,
-                halign = Gtk.Align.FILL,
-            };
-            slot.add_css_class ("account-rail-slot");
-            slot.append (button);
-            this.account_rail_list.append (slot);
+            this.account_rail_list.append (button);
         }
 
-        sync_account_row_sizes ();
+        sync_toolbar_header_sizes ();
         if (this.selected_account != null)
             sync_account_selection (this.selected_account);
         this.selecting_account = guard;
@@ -3017,23 +3014,11 @@ public class Mail.Window : Adw.ApplicationWindow {
         }
     }
 
-    private void sync_account_row_sizes () {
-        sync_toolbar_header_sizes ();
-
-        this.account_row_sizes = new Gtk.SizeGroup (Gtk.SizeGroupMode.VERTICAL);
-        Gtk.Widget? rail = this.account_rail_list.get_first_child ();
-        for (int i = 0; this.account_list.get_row_at_index (i) != null && rail != null; i++) {
-            this.account_row_sizes.add_widget (this.account_list.get_row_at_index (i));
-            this.account_row_sizes.add_widget (rail);
-            rail = rail.get_next_sibling ();
-        }
-    }
-
-    /* One continuous header height: rail +, accounts, folders, messages. */
+    /* Align folder / list / reader headers (account list pane optional). */
     private void sync_toolbar_header_sizes () {
         this.account_header_sizes = new Gtk.SizeGroup (Gtk.SizeGroupMode.VERTICAL);
-        this.account_header_sizes.add_widget (this.account_header);
-        this.account_header_sizes.add_widget (this.account_rail_add_slot);
+        if (ACCOUNT_LIST_PANE_ENABLED)
+            this.account_header_sizes.add_widget (this.account_header);
         this.account_header_sizes.add_widget (this.folder_header);
         if (this.reading_pane_split) {
             this.account_header_sizes.add_widget (this.list_header);
@@ -3044,7 +3029,16 @@ public class Mail.Window : Adw.ApplicationWindow {
     }
 
     private void apply_account_sidebar (bool expanded) {
+        if (!ACCOUNT_LIST_PANE_ENABLED) {
+            this.account_pane.visible = false;
+            this.folder_split.show_sidebar = false;
+            this.sidebar_button.visible = false;
+            apply_account_rail ();
+            return;
+        }
+
         this.account_pane.visible = true;
+        this.sidebar_button.visible = true;
         this.folder_split.show_sidebar = expanded;
         this.folder_split.min_sidebar_width = ACCOUNT_PANE_MIN;
         this.folder_split.max_sidebar_width = ACCOUNT_PANE_MAX;
@@ -3056,15 +3050,73 @@ public class Mail.Window : Adw.ApplicationWindow {
     }
 
     private void apply_account_rail () {
+        /* Legacy: "hide" was a colour-mode choice; migrate to the enable switch. */
+        if (this.settings.get_string ("account-rail") == "hide") {
+            this.settings.set_boolean ("account-rail-enabled", false);
+            this.settings.set_string ("account-rail", "default");
+        }
+
+        var enabled = this.settings.get_boolean ("account-rail-enabled");
         var mode = this.settings.get_string ("account-rail");
         this.account_rail.remove_css_class ("rail-theme");
-        if (mode == "hide") {
+        this.account_rail.remove_css_class ("rail-custom");
+        clear_account_rail_custom_css ();
+
+        if (!enabled) {
             this.account_rail.visible = false;
             return;
         }
+
         this.account_rail.visible = true;
-        if (mode == "theme")
+        if (mode == "theme") {
             this.account_rail.add_css_class ("rail-theme");
+        } else if (mode == "custom") {
+            this.account_rail.add_css_class ("rail-custom");
+            apply_account_rail_custom_css (this.settings.get_string ("account-rail-color"));
+        }
+    }
+
+    private void clear_account_rail_custom_css () {
+        if (this.account_rail_css == null)
+            return;
+        Gtk.StyleContext.remove_provider_for_display (
+            this.account_rail.get_display (),
+            this.account_rail_css
+        );
+        this.account_rail_css = null;
+    }
+
+    private void apply_account_rail_custom_css (string color) {
+        var hex = color.strip ();
+        if (hex.length == 0)
+            hex = "#3584e4";
+        if (!hex.has_prefix ("#"))
+            hex = "#" + hex;
+
+        var rgba = Gdk.RGBA ();
+        if (!rgba.parse (hex))
+            rgba.parse ("#3584e4");
+        var fg = rail_contrast_fg (rgba);
+
+        clear_account_rail_custom_css ();
+        this.account_rail_css = new Gtk.CssProvider ();
+        this.account_rail_css.load_from_string (
+            ".account-rail.rail-custom { --letter-rail-bg: %s; --letter-rail-fg: %s; }".printf (
+                hex,
+                fg
+            )
+        );
+        Gtk.StyleContext.add_provider_for_display (
+            this.account_rail.get_display (),
+            this.account_rail_css,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
+        );
+    }
+
+    private static string rail_contrast_fg (Gdk.RGBA bg) {
+        /* Relative luminance (sRGB). */
+        double lum = 0.2126 * bg.red + 0.7152 * bg.green + 0.0722 * bg.blue;
+        return lum > 0.55 ? "#1c1c1c" : "#ffffff";
     }
 
     private void on_folder_split_collapsed () {
@@ -7402,6 +7454,10 @@ public class Mail.Window : Adw.ApplicationWindow {
     }
 
     private void on_toggle_sidebar () {
+        if (!ACCOUNT_LIST_PANE_ENABLED) {
+            this.folder_pane_button.active = !this.folder_pane_button.active;
+            return;
+        }
         this.sidebar_button.active = !this.sidebar_button.active;
     }
 
@@ -11322,7 +11378,8 @@ public class Mail.Window : Adw.ApplicationWindow {
         this.settings.set_int ("window-width", get_width ().clamp (WINDOW_MIN_WIDTH, 4000));
         this.settings.set_int ("window-height", get_height ().clamp (WINDOW_MIN_HEIGHT, 4000));
         this.settings.set_boolean ("window-maximized", maximized);
-        this.settings.set_boolean ("show-folder-sidebar", this.sidebar_button.active);
+        if (ACCOUNT_LIST_PANE_ENABLED)
+            this.settings.set_boolean ("show-folder-sidebar", this.sidebar_button.active);
         this.settings.set_int ("folder-pane-width", FOLDER_PANE_MAX);
         this.settings.set_int ("message-pane-width", this.message_pane_preferred.clamp (MESSAGE_PANE_MIN, MESSAGE_PANE_MAX));
     }

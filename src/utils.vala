@@ -1313,15 +1313,17 @@ namespace Mail.Utils {
                 addr = addr.substring (1, addr.length - 2).strip ();
 
             /* Older Letter builds could glue bare emails into the display name
-             * before <addr> when quoting commas. Expand those back out. */
+             * before <addr> when quoting commas. Expand those back out.
+             * Only recurse when Camel actually splits into multiple addresses —
+             * semicolon lists often decode to one entry whose name still looks
+             * “merged”, which would recurse forever (Sent header crash). */
             if (looks_like_merged_address_name (display)) {
                 var rebuilt = addr.length > 0 && display.down () != addr.down ()
                     ? "%s <%s>".printf (display, addr)
                     : display;
-                var expanded = recipients_from_address (
-                    internet_address_from_header_raw (rebuilt)
-                );
-                if (expanded.length > 1) {
+                var parsed = internet_address_from_header_raw (rebuilt);
+                if (parsed.length () > 1) {
+                    var expanded = recipients_from_address (parsed);
                     for (uint e = 0; e < expanded.length; e++)
                         result.add (expanded[e]);
                     continue;

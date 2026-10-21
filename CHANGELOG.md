@@ -21,14 +21,41 @@ refactors unless they affect behaviour.
 
 ### Added
 
+- Preferences → Accounts: drag the handle on an account row to set a custom
+  order (no longer alphabetical only). The same order is used in the account
+  rail and under Local library.
 - Signature (and compose) formatting can insert and edit hyperlinks from the
   toolbar (`insert-link-symbolic`) or the editor context menu, with Ctrl+K.
   The link dialog offers clickable `https://` and `mailto:` chips instead of a
   fixed placeholder. Bold / italic / underline / strikethrough sit in one
   text-style popover so the compose toolbar stays compact.
 
+### Added
+
+- Compose suggestions: recent addresses show a close button to remove a bad or
+  unwanted entry from history (address-book contacts are unchanged).
+
+### Fixed
+
+- Compose address suggestions no longer show glued Sent “To” display names
+  (several people as one chip). Harvest now uses the raw header with addresses,
+  and corrupted collected-address entries are cleaned on load. The suggestion
+  popover left-aligns with the start of the typed text.
+
 ### Changed
 
+- Preferences → Appearance: **Enable account rail** (on by default) replaces
+  the old “Hide” colour option. **Account rail colour** offers Default
+  (system accent), Follow system, or Custom with GNOME accent presets and a
+  colour picker. Account pictures stay tied to the rail being enabled.
+- The Online Accounts list pane (between the rail and folders) is hidden for
+  now: switch accounts from the rail, add or edit them in Preferences. The
+  rail no longer has an add (+) button; icons start at the top with normal
+  GTK padding (easy to restore the pane if feedback asks for it).
+- Preferences row descriptions wrap within about two thirds of the row width so
+  dropdowns and switches on the right stay readable; ComboRow values are
+  right-aligned. “Download message bodies” copy explains on-disk cache for
+  browsing and search.
 - Preferences are split into four header pages (Accounts, Appearance, Behavior,
   Integrations) instead of one long scrolling sheet with section chips.
 - Folder sidebar and Move dialog folder tree use the same padding and height

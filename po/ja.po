@@ -997,7 +997,8 @@ msgid "Select an Account"
 msgstr "アカウントを選択"
 
 #: src/window.blp:199
-msgid "Choose an account in the sidebar to load its folders."
+#, fuzzy
+msgid "Choose an account from the rail to load its folders."
 msgstr ""
 "サイドバーからアカウントを選択すると、そのアカウントのフォルダが表示されま"
 "す。"
@@ -2121,13 +2122,11 @@ msgstr ""
 "す。"
 
 #: src/preferences-dialog.vala:395
+#, fuzzy
 msgid ""
-"Applies to all folders (Inbox, Archive, Sent, Trash, custom, …). Older "
-"bodies are trimmed at startup; headers stay for the message list."
+"Keep complete emails on disk for the selected period for fast browsing and "
+"search indexing. Needs disk space."
 msgstr ""
-"すべてのフォルダ(受信トレイ、アーカイブ、送信済み、ゴミ箱、カスタムフォルダな"
-"ど)に適用されます。起動時に古い本文は削除されますが、メッセージ一覧にはヘッ"
-"ダーが残ります。"
 
 #: src/preferences-dialog.vala:399
 msgid "Downloading everything can take time and fill the disk."
