@@ -5,6 +5,109 @@ namespace Mail.Utils {
         return _("Letter");
     }
 
+    public class GithubRelease {
+        public string version;
+        public string html_url;
+
+        public GithubRelease (string version, string html_url) {
+            this.version = version;
+            this.html_url = html_url;
+        }
+    }
+
+    public static string normalize_version (string? raw) {
+        if (raw == null)
+            return "";
+        var version = raw.strip ();
+        if (version.has_prefix ("v") || version.has_prefix ("V"))
+            version = version.substring (1).strip ();
+        var cut = version.index_of_char ('~');
+        if (cut < 0)
+            cut = version.index_of_char ('+');
+        if (cut > 0)
+            version = version.substring (0, cut);
+        return version;
+    }
+
+    /* Positive when a is newer than b. Ignores a leading "v" and Debian "~". */
+    public static int compare_versions (string a, string b) {
+        var left = split_version_parts (normalize_version (a));
+        var right = split_version_parts (normalize_version (b));
+        uint n = uint.max (left.length, right.length);
+        for (uint i = 0; i < n; i++) {
+            int ai = i < left.length ? left[i] : 0;
+            int bi = i < right.length ? right[i] : 0;
+            if (ai != bi)
+                return ai - bi;
+        }
+        return 0;
+    }
+
+    private static int[] split_version_parts (string version) {
+        var core = version;
+        var dash = core.index_of_char ('-');
+        if (dash >= 0)
+            core = core.substring (0, dash);
+        var pieces = core.split (".");
+        var parts = new int[pieces.length];
+        for (int i = 0; i < pieces.length; i++) {
+            var piece = pieces[i];
+            if (piece.length == 0) {
+                parts[i] = 0;
+                continue;
+            }
+            var digits = new StringBuilder ();
+            int index = 0;
+            unichar c;
+            while (piece.get_next_char (ref index, out c)) {
+                if (c.isdigit ())
+                    digits.append_unichar (c);
+                else
+                    break;
+            }
+            parts[i] = digits.len > 0 ? int.parse (digits.str) : 0;
+        }
+        return parts;
+    }
+
+    public static async GithubRelease fetch_latest_github_release (
+        string owner,
+        string repo
+    ) throws Error {
+        var url = "https://api.github.com/repos/%s/%s/releases/latest".printf (owner, repo);
+        var message = new Soup.Message ("GET", url);
+        message.request_headers.append (
+            "Accept",
+            "application/vnd.github+json"
+        );
+        message.request_headers.append (
+            "User-Agent",
+            "Letter/%s (+https://github.com/stalvatero/letter)".printf (Config.VERSION)
+        );
+        var session = (Soup.Session) Object.new (
+            typeof (Soup.Session),
+            "timeout", 20
+        );
+        var body = yield session.send_and_read_async (message, Priority.DEFAULT, null);
+        if (message.status_code != Soup.Status.OK)
+            throw new IOError.FAILED ("HTTP %u", message.status_code);
+
+        var parser = new Json.Parser ();
+        unowned uint8[] data = body.get_data ();
+        parser.load_from_data ((string) data, (ssize_t) data.length);
+        var root = parser.get_root ();
+        if (root == null || root.get_node_type () != Json.NodeType.OBJECT)
+            throw new IOError.INVALID_DATA ("Unexpected GitHub release payload");
+
+        var obj = root.get_object ();
+        var tag = obj.get_string_member_with_default ("tag_name", "");
+        var html_url = obj.get_string_member_with_default ("html_url", "");
+        var version = normalize_version (tag);
+        if (version.length == 0 || html_url.length == 0)
+            throw new IOError.INVALID_DATA ("GitHub release missing tag or URL");
+        return new GithubRelease (version, html_url);
+    }
+
     public static void migrate_legacy_app_dirs () {
         migrate_dir (
             Path.build_filename (Environment.get_user_data_dir (), "gnome-mail"),

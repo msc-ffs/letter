@@ -70,6 +70,15 @@ void test_sanitize_message_preview () {
     );
 }
 
+void test_compare_versions () {
+    assert_cmpstr (Mail.Utils.normalize_version ("v1.7.0"), EQ, "1.7.0");
+    assert_cmpstr (Mail.Utils.normalize_version ("1.7.0~rc.1"), EQ, "1.7.0");
+    assert (Mail.Utils.compare_versions ("1.7.0", "1.6.0") > 0);
+    assert (Mail.Utils.compare_versions ("v1.7.0", "1.7.0") == 0);
+    assert (Mail.Utils.compare_versions ("1.6.9", "1.7.0") < 0);
+    assert (Mail.Utils.compare_versions ("1.7", "1.7.0") == 0);
+}
+
 void test_header_cache_escape () {
     assert_cmpstr (Mail.Window.header_cache_escape (null), EQ, "");
     assert_cmpstr (Mail.Window.header_cache_escape (""), EQ, "");
@@ -94,6 +103,7 @@ void main (string[] args) {
     Test.add_func ("/replace-literal/matches-string-replace-on-empty-pattern", test_replace_literal_matches_string_replace_on_empty_pattern);
     Test.add_func ("/sanitize-recipient-text/cleans-names", test_sanitize_recipient_text);
     Test.add_func ("/sanitize-message-preview/strips-image-placeholders", test_sanitize_message_preview);
+    Test.add_func ("/compare-versions/orders-semver", test_compare_versions);
     Test.add_func ("/header-cache/escape", test_header_cache_escape);
     Test.add_func ("/header-cache/escape-round-trip", test_header_cache_escape_round_trip);
     Test.run ();

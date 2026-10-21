@@ -12,6 +12,7 @@ public class Mail.Application : Adw.Application {
     private SetupWindow? setup_window;
     private uint welcome_idle;
     private bool activate_pending;
+    private bool checking_updates;
 
     private const ActionEntry[] ACTION_ENTRIES = {
         { "quit", on_quit },
@@ -19,6 +20,7 @@ public class Mail.Application : Adw.Application {
         { "welcome", on_welcome },
         { "preferences", on_preferences },
         { "shortcuts", on_shortcuts },
+        { "check-updates", on_check_updates },
         { "refresh", on_refresh },
         { "new-message", on_new_message },
         { "online-accounts", on_online_accounts },
@@ -431,6 +433,82 @@ public class Mail.Application : Adw.Application {
             translator_credits = _("translator-credits"),
         };
         about.present (get_active_window ());
+    }
+
+    private void on_check_updates () {
+        if (this.checking_updates)
+            return;
+        check_for_updates.begin ();
+    }
+
+    private async void check_for_updates () {
+        this.checking_updates = true;
+        var action = lookup_action ("check-updates") as SimpleAction;
+        action?.set_enabled (false);
+
+        var parent = get_active_window ();
+        var win = parent as Window;
+        win?.show_toast (_("Checking for updates…"));
+
+        try {
+            var release = yield Utils.fetch_latest_github_release ("stalvatero", "letter");
+            var current = Utils.normalize_version (Config.VERSION);
+            var latest = release.version;
+            if (Utils.compare_versions (latest, current) > 0)
+                present_update_available (parent, latest, current, release.html_url);
+            else
+                present_up_to_date (parent, current);
+        } catch (Error e) {
+            warning ("Update check failed: %s", e.message);
+            present_update_check_failed (parent);
+        } finally {
+            this.checking_updates = false;
+            action?.set_enabled (true);
+        }
+    }
+
+    private void present_up_to_date (Gtk.Window? parent, string version) {
+        var dialog = new Adw.AlertDialog (
+            _("Up to Date"),
+            _("You are already using the latest version (%s).").printf (version)
+        );
+        dialog.add_response ("ok", _("OK"));
+        dialog.present (parent);
+    }
+
+    private void present_update_available (
+        Gtk.Window? parent,
+        string latest,
+        string current,
+        string html_url
+    ) {
+        var dialog = new Adw.AlertDialog (
+            _("Update Available"),
+            _("Letter %s is available. You have version %s.").printf (latest, current)
+        );
+        dialog.add_response ("close", _("Close"));
+        dialog.add_response ("open", _("Open Release Page"));
+        dialog.set_response_appearance ("open", Adw.ResponseAppearance.SUGGESTED);
+        dialog.default_response = "open";
+        dialog.response.connect ((response_id) => {
+            if (response_id != "open")
+                return;
+            try {
+                AppInfo.launch_default_for_uri (html_url, null);
+            } catch (Error e) {
+                warning ("Could not open release page: %s", e.message);
+            }
+        });
+        dialog.present (parent);
+    }
+
+    private void present_update_check_failed (Gtk.Window? parent) {
+        var dialog = new Adw.AlertDialog (
+            _("Could Not Check for Updates"),
+            _("Check your network connection and try again.")
+        );
+        dialog.add_response ("ok", _("OK"));
+        dialog.present (parent);
     }
 
     private void on_preferences () {

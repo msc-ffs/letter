@@ -19,6 +19,11 @@ refactors unless they affect behaviour.
 
 ## [Unreleased](https://github.com/stalvatero/letter/compare/v1.7.0...HEAD)
 
+### Added
+
+- Main menu → Check for Updates… queries the latest GitHub release and shows
+  whether Letter is current, or offers to open the newer release page.
+
 ### Fixed
 
 - Message-list preview no longer shows Camel image placeholders such as
