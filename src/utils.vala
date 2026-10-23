@@ -1448,8 +1448,9 @@ namespace Mail.Utils {
         return display.contains (",") || display.contains (";");
     }
 
-    /* Vala’s string.replace() builds a GRegex on every call and aborts on
-     * RegexError for some real-world MIME cid/data-uri pairs. */
+    /* Vala’s string.replace() builds a GRegex on every call and aborts via
+     * assert_not_reached() on RegexError — including invalid UTF-8 in mail
+     * previews/headers and awkward MIME cid/data-uri pairs. */
     public static string replace_literal (string text, string old, string replacement) {
         if (text.length == 0 || old.length == 0 || old == replacement)
             return text;
@@ -1514,7 +1515,9 @@ namespace Mail.Utils {
         if (raw == null || raw.length == 0)
             return null;
 
-        var text = raw.replace ("\r\n", "\n").replace ("\r", "\n").replace ("\n", " ").strip ();
+        /* Never use string.replace() here: Camel previews can be invalid UTF-8
+         * and Vala’s GRegex-backed replace aborts the process on RegexError. */
+        var text = replace_literal (replace_literal (replace_literal (raw, "\r\n", "\n"), "\r", "\n"), "\n", " ").strip ();
         try {
             var image_re = new Regex ("\\[\\s*image\\s*:[^\\]]*\\]", RegexCompileFlags.CASELESS);
             text = image_re.replace (text, text.length, 0, "");
@@ -1531,6 +1534,7 @@ namespace Mail.Utils {
             );
             text = angle_re.replace (text, text.length, 0, "");
         } catch (Error e) {
+            /* Invalid UTF-8 or odd brackets: keep the newline-collapsed text. */
         }
 
         text = collapse_spaces (text).strip ();

@@ -9459,6 +9459,7 @@ public class Mail.Window : Adw.ApplicationWindow {
         var collapsed = new GenericSet<string> (str_hash, str_equal);
         var list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.SINGLE,
+            activate_on_single_click = false,
             valign = Gtk.Align.FILL,
             vexpand = true,
         };
@@ -9517,6 +9518,15 @@ public class Mail.Window : Adw.ApplicationWindow {
             }
             picked = pick.mail_folder;
             dialog.set_response_enabled ("move", true);
+        });
+        /* Enter / double-click on a writable folder confirms Move (Reddit QoL). */
+        list.row_activated.connect ((row) => {
+            var pick = row as FolderPickRow;
+            if (pick == null || !pick.mail_folder.can_accept_messages)
+                return;
+            picked = pick.mail_folder;
+            dialog.set_response_enabled ("move", true);
+            dialog.response ("move");
         });
 
         search.changed.connect (() => {
@@ -11532,8 +11542,8 @@ private class Mail.FolderPickRow : Gtk.ListBoxRow {
     }
 
     construct {
-        /* Select only — Move confirms via the dialog button, not on activate. */
-        this.activatable = false;
+        /* Click selects; Enter / double-click activates Move when writable. */
+        this.activatable = this.mail_folder.can_accept_messages;
         this.selectable = this.mail_folder.can_accept_messages;
         add_css_class ("folder-pick-row");
         if (!this.mail_folder.can_accept_messages)

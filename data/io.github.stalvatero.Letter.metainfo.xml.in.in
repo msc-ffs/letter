@@ -56,6 +56,16 @@
     <category>Email</category>
   </categories>
   <releases>
+    <release version="1.7.1" type="stable" date="2026-10-23">
+      <description>
+        <p>
+          Fixes a crash when message previews contain invalid UTF-8. Adds Check
+          for Updates in the main menu, Ctrl+Return to send, and Enter to
+          confirm Move to Folder. Strips useless image placeholders from the
+          message-list preview line.
+        </p>
+      </description>
+    </release>
     <release version="1.7.0" type="stable" date="2026-10-21">
       <description>
         <p>

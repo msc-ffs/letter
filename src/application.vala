@@ -528,6 +528,7 @@ public class Mail.Application : Adw.Application {
         var mail = new Adw.ShortcutsSection (_("Letter shortcuts"));
         mail.add (new Adw.ShortcutsItem (_("Search"), "<Ctrl>f"));
         mail.add (new Adw.ShortcutsItem (_("New message"), "<Ctrl>n"));
+        mail.add (new Adw.ShortcutsItem (_("Send message"), "<Ctrl>Return"));
         mail.add (new Adw.ShortcutsItem (_("Reply"), "R"));
         mail.add (new Adw.ShortcutsItem (_("Reply All"), "<Shift>r"));
         mail.add (new Adw.ShortcutsItem (_("Forward"), "F"));

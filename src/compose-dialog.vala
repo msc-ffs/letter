@@ -227,6 +227,7 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
         this.body_view.content_changed.connect (() => {
             this.body_mutated = true;
         });
+        this.body_view.send_requested.connect (send_from_shortcut);
         this.initial_body = "";
         this.body_view.ready.connect (() => {
             if (this.skip_initial_signature) {
@@ -285,7 +286,31 @@ public class Mail.ComposeWindow : Adw.ApplicationWindow {
         add_file_drop_target (this);
 
         close_request.connect (on_close_request);
+        add_send_shortcut ();
         update_send_sensitive ();
+    }
+
+    private void add_send_shortcut () {
+        var shortcuts = new Gtk.ShortcutController () {
+            scope = Gtk.ShortcutScope.LOCAL,
+        };
+        string[] triggers = { "<Control>Return", "<Control>KP_Enter" };
+        foreach (var trigger in triggers) {
+            var parsed = Gtk.ShortcutTrigger.parse_string (trigger);
+            if (parsed == null)
+                continue;
+            shortcuts.add_shortcut (new Gtk.Shortcut (parsed, new Gtk.CallbackAction ((widget, args) => {
+                send_from_shortcut ();
+                return true;
+            })));
+        }
+        add_controller (shortcuts);
+    }
+
+    private void send_from_shortcut () {
+        if (!this.send_button.sensitive || this.sending)
+            return;
+        send.begin ();
     }
 
     public void adopt_compose_id (string id) {
@@ -1926,6 +1951,7 @@ public class Mail.ComposeHtmlView : Gtk.Box {
     public signal void image_selection_changed (string? id, string size);
     public signal void inline_image_presence_changed (bool present);
     public signal void content_changed ();
+    public signal void send_requested ();
     public signal void format_state_changed (
         string font,
         string size,
@@ -2855,6 +2881,16 @@ public class Mail.ComposeHtmlView : Gtk.Box {
                 return true;
             })));
         }
+        string[] send_triggers = { "<Control>Return", "<Control>KP_Enter" };
+        foreach (var trigger in send_triggers) {
+            var parsed = Gtk.ShortcutTrigger.parse_string (trigger);
+            if (parsed == null)
+                continue;
+            shortcuts.add_shortcut (new Gtk.Shortcut (parsed, new Gtk.CallbackAction ((widget, args) => {
+                send_requested ();
+                return true;
+            })));
+        }
         add_controller (shortcuts);
 
         var keys = new Gtk.EventControllerKey ();
@@ -2906,6 +2942,10 @@ public class Mail.ComposeHtmlView : Gtk.Box {
         }
         if (key == Gdk.Key.k && !shift) {
             ComposeExtras.prompt_edit_link.begin (this, this);
+            return true;
+        }
+        if (!shift && (key == Gdk.Key.Return || key == Gdk.Key.KP_Enter)) {
+            send_requested ();
             return true;
         }
         return false;

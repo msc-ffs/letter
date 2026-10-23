@@ -7,7 +7,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 How we maintain it:
 
-- During development, add bullets under **[Unreleased](https://github.com/stalvatero/letter/compare/v1.7.0...HEAD)**.
+- During development, add bullets under **[Unreleased](https://github.com/stalvatero/letter/compare/v1.7.1...HEAD)**.
 - On each release (rc or stable), rename that section to the version + date, and
 copy a short summary into `data/io.github.stalvatero.Letter.metainfo.xml.in.in`
 (`<releases>`, leave msgstr empty in po files — keep release notes in English)
@@ -17,18 +17,26 @@ refactors unless they affect behaviour.
 
 
 
-## [Unreleased](https://github.com/stalvatero/letter/compare/v1.7.0...HEAD)
+## [Unreleased](https://github.com/stalvatero/letter/compare/v1.7.1...HEAD)
+
+## [1.7.1](https://github.com/stalvatero/letter/compare/v1.7.0...v1.7.1) - 2026-10-23
 
 ### Added
 
 - Main menu → Check for Updates… queries the latest GitHub release and shows
   whether Letter is current, or offers to open the newer release page.
+- Compose: **Ctrl+Return** (and Ctrl+keypad Enter) sends the message.
+- Move to Folder: with a writable folder focused, **Return** (or double-click)
+  confirms the move.
 
 ### Fixed
 
 - Message-list preview no longer shows Camel image placeholders such as
   `[image: Google]` or `[Firma.png]`. Image-only snippets stay empty; real
   text after a logo alt remains.
+- Do not abort when a Camel preview contains invalid UTF-8. Vala’s
+  `string.replace()` uses GRegex and hits `assert_not_reached` on those
+  snippets (crash on archive / startup while loading the header cache).
 
 ## [1.7.0](https://github.com/stalvatero/letter/compare/v1.6.0...v1.7.0) - 2026-10-21
 

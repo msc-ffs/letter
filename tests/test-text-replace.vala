@@ -68,6 +68,14 @@ void test_sanitize_message_preview () {
         EQ,
         "Ciao mondo"
     );
+
+    /* Invalid UTF-8 must not abort (Vala string.replace → GRegex assert). */
+    var bad = new StringBuilder ();
+    bad.append ("Ciao");
+    bad.append_c ((char) 0xff);
+    bad.append ("\nmondo");
+    var cleaned = Mail.Utils.sanitize_message_preview (bad.str);
+    assert (cleaned != null && cleaned.contains ("Ciao") && cleaned.contains ("mondo"));
 }
 
 void test_compare_versions () {
